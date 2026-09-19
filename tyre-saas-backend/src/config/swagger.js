@@ -1,26 +1,57 @@
 module.exports = {
   "openapi": "3.0.0",
+
   "info": {
     "title": "Tyre Shop Follow-Up App — REST API",
     "version": "1.0.0",
-    "description": "\n**Comprehensive REST API Documentation for Tyre Shop Follow-Up App**\n\nProvides endpoints for:\n* **Authentication**: Phone + Password with multi-shop detection\n* **Employee Workflow**:\n  - Shop Picker\n  - In-App Banner (Due Today / Tomorrow / Overdue)\n  - Duplicate Phone Verification\n  - 4 Home Tabs: Add Customer Enquiry (immutable shop_id), Pending Follow-ups, Completed Follow-ups, and Fast Search\n  - Follow-up Detail & Action (Status, Reschedule, Remarks, Audit logs)\n* **Admin Workflow**:\n  - Unrestricted cross-shop Dashboard with conversion rates\n  - All Entries multi-shop view with global filters\n  - Reassignment of enquiries\n  - Soft deletes (is_deleted = 1)\n  - Shop Management (Create, Update, Deactivate)\n  - User Management (Create, Edit, Reset Password, Deactivate - 403 login block)\n  - CSV Report Export\n\n**Pre-seeded Demo Credentials:**\n* **Super Admin**: Phone: `9999999999`, Password: `admin123`\n* **Employee (Multi-Shop)**: Phone: `9811111111`, Password: `emp123`\n* **Employee (Single-Shop)**: Phone: `9822222222`, Password: `emp123`\n    "
+    "description": `
+**Comprehensive REST API Documentation for Tyre Shop Follow-Up App**
+
+Provides endpoints for:
+
+* **Authentication**
+* **Employee Workflow**
+* **Admin Workflow**
+* **Super Admin Workflow**
+
+### Roles
+
+* SUPER_ADMIN
+* ADMIN
+* EMPLOYEE
+
+### Authentication
+
+All protected endpoints require:
+
+Authorization: Bearer <JWT_TOKEN>
+`
   },
+
   "servers": [
     {
       "url": "http://localhost:5000",
       "description": "Local Development Server"
+    },
+    {
+      "url": "https://tyre-7c07.onrender.com",
+      "description": "Production Server"
     }
   ],
+
   "components": {
+
     "securitySchemes": {
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Enter your JWT token obtained from /api/v1/auth/login"
+        "description": "Enter JWT token obtained from /api/v1/auth/login"
       }
     },
+
     "schemas": {
+
       "LoginRequest": {
         "type": "object",
         "required": [
@@ -30,14 +61,15 @@ module.exports = {
         "properties": {
           "phone": {
             "type": "string",
-            "example": "9811111111"
+            "example": "9999999999"
           },
           "password": {
             "type": "string",
-            "example": "emp123"
+            "example": "admin123"
           }
         }
       },
+
       "CreateEnquiryRequest": {
         "type": "object",
         "required": [
@@ -49,7 +81,7 @@ module.exports = {
         "properties": {
           "shopId": {
             "type": "string",
-            "example": "39caf0a7-5177-40aa-9aa9-c1b5c4f1c4e1"
+            "example": "shop-uuid"
           },
           "customerName": {
             "type": "string",
@@ -65,7 +97,7 @@ module.exports = {
           },
           "vehicleReg": {
             "type": "string",
-            "example": "KA-01-AB-1234"
+            "example": "TN-38-AB-1234"
           },
           "tyreSize": {
             "type": "string",
@@ -73,12 +105,11 @@ module.exports = {
           },
           "tyreBrand": {
             "type": "string",
-            "example": "Bridgestone Dueler"
+            "example": "Bridgestone"
           },
           "quantity": {
             "type": "integer",
-            "example": 4,
-            "default": 4
+            "example": 4
           },
           "estimatedBudget": {
             "type": "number",
@@ -87,14 +118,15 @@ module.exports = {
           "followUpDate": {
             "type": "string",
             "format": "date-time",
-            "example": "2026-09-17T10:00:00.000Z"
+            "example": "2026-09-20T10:00:00.000Z"
           },
           "remarks": {
             "type": "string",
-            "example": "Customer inquiring about warranty and installment options."
+            "example": "Customer wants tyre replacement."
           }
         }
       },
+
       "UpdateEnquiryRequest": {
         "type": "object",
         "properties": {
@@ -114,7 +146,7 @@ module.exports = {
           },
           "remarks": {
             "type": "string",
-            "example": "Customer purchased 4 tyres. Job complete."
+            "example": "Customer purchased tyres."
           },
           "customerName": {
             "type": "string"
@@ -133,6 +165,7 @@ module.exports = {
           }
         }
       },
+
       "CreateShopRequest": {
         "type": "object",
         "required": [
@@ -149,14 +182,41 @@ module.exports = {
           },
           "address": {
             "type": "string",
-            "example": "Plot 12, Expressway Service Rd"
+            "example": "Expressway Service Road"
           },
           "phone": {
             "type": "string",
-            "example": "080-44556677"
+            "example": "9876543210"
           }
         }
       },
+
+      "UpdateShopRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Expressway Tyre Zone"
+          },
+          "code": {
+            "type": "string",
+            "example": "EXP-03"
+          },
+          "address": {
+            "type": "string",
+            "example": "Expressway Service Road"
+          },
+          "phone": {
+            "type": "string",
+            "example": "9876543210"
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+
       "CreateUserRequest": {
         "type": "object",
         "required": [
@@ -191,11 +251,37 @@ module.exports = {
               "type": "string"
             },
             "example": [
-              "39caf0a7-5177-40aa-9aa9-c1b5c4f1c4e1"
+              "shop-uuid"
             ]
           }
         }
       },
+
+      "UpdateUserRequest": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "ADMIN",
+              "EMPLOYEE"
+            ]
+          },
+          "shopIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+
       "CreateOrganizationRequest": {
         "type": "object",
         "required": [
@@ -212,7 +298,7 @@ module.exports = {
           },
           "phone": {
             "type": "string",
-            "example": "080-88990011"
+            "example": "08088990011"
           },
           "email": {
             "type": "string",
@@ -236,6 +322,28 @@ module.exports = {
           }
         }
       },
+
+      "UpdateOrganizationRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          }
+        }
+      },
+
       "CreateBusinessAdminRequest": {
         "type": "object",
         "required": [
@@ -247,7 +355,7 @@ module.exports = {
         "properties": {
           "organizationId": {
             "type": "string",
-            "example": "org-uuid-here"
+            "example": "org-uuid"
           },
           "phone": {
             "type": "string",
@@ -259,38 +367,46 @@ module.exports = {
           },
           "fullName": {
             "type": "string",
-            "example": "Anil Kumar (Branch Head)"
+            "example": "Anil Kumar"
           }
         }
       }
+
     }
   },
+
   "tags": [
     {
-      "name": "Super Admin",
-      "description": "Platform SaaS Owner endpoints (Manage Organizations, Business Admins, Global Metrics)"
-    },
-    {
       "name": "Auth",
-      "description": "Login and profile verification"
+      "description": "Authentication and current user"
     },
     {
       "name": "Employee",
-      "description": "Employee workflows (Home tabs, banner, enquiry CRUD)"
+      "description": "Employee enquiry workflow"
     },
     {
       "name": "Admin",
-      "description": "Admin workflows (Dashboard, multi-shop enquiries, users & shops)"
+      "description": "Business Admin dashboard, shops, users and enquiries"
+    },
+    {
+      "name": "Super Admin",
+      "description": "Platform Super Admin organization and global management"
     }
   ],
+
   "paths": {
+
+    /* =========================================================
+       AUTH
+       ========================================================= */
+
     "/api/v1/auth/login": {
       "post": {
         "tags": [
           "Auth"
         ],
-        "summary": "Login with Phone + Password",
-        "description": "Returns JWT token, user info, assigned shops, and hasMultipleShops flag (for Flutter Shop Picker).",
+        "summary": "Login",
+        "description": "Login using phone number and password.",
         "requestBody": {
           "required": true,
           "content": {
@@ -306,7 +422,7 @@ module.exports = {
             "description": "Login successful"
           },
           "401": {
-            "description": "Invalid credentials"
+            "description": "Invalid phone number or password"
           },
           "403": {
             "description": "Account deactivated"
@@ -314,12 +430,13 @@ module.exports = {
         }
       }
     },
+
     "/api/v1/auth/me": {
       "get": {
         "tags": [
           "Auth"
         ],
-        "summary": "Get current user profile and assigned shops",
+        "summary": "Get current logged-in user",
         "security": [
           {
             "bearerAuth": []
@@ -327,7 +444,7 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "User profile returned"
+            "description": "User information returned"
           },
           "401": {
             "description": "Unauthorized"
@@ -335,12 +452,17 @@ module.exports = {
         }
       }
     },
+
+    /* =========================================================
+       EMPLOYEE
+       ========================================================= */
+
     "/api/v1/employee/shops": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Shop Picker: Get active shops assigned to employee",
+        "summary": "Get employee assigned shops",
         "security": [
           {
             "bearerAuth": []
@@ -348,17 +470,18 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "List of assigned shops"
+            "description": "Assigned shops returned"
           }
         }
       }
     },
+
     "/api/v1/employee/banner-summary": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "In-App Banner: Due Today, Due Tomorrow, Overdue counts",
+        "summary": "Get follow-up banner summary",
         "security": [
           {
             "bearerAuth": []
@@ -371,23 +494,23 @@ module.exports = {
             "required": true,
             "schema": {
               "type": "string"
-            },
-            "description": "Active Shop ID"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Banner metrics returned"
+            "description": "Due today, tomorrow and overdue counts"
           }
         }
       }
     },
+
     "/api/v1/employee/check-duplicate": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Check for duplicate customer phone before save",
+        "summary": "Check duplicate customer phone",
         "security": [
           {
             "bearerAuth": []
@@ -405,7 +528,6 @@ module.exports = {
           {
             "name": "shopId",
             "in": "query",
-            "required": false,
             "schema": {
               "type": "string"
             }
@@ -430,12 +552,13 @@ module.exports = {
         }
       }
     },
+
     "/api/v1/employee/enquiries": {
       "post": {
         "tags": [
           "Employee"
         ],
-        "summary": "Tab 1: Add Customer Enquiry (shop_id is permanently set)",
+        "summary": "Create customer enquiry",
         "security": [
           {
             "bearerAuth": []
@@ -458,12 +581,13 @@ module.exports = {
         }
       }
     },
+
     "/api/v1/employee/pending": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Tab 2: Get pending follow-ups for active shop",
+        "summary": "Get pending follow-ups",
         "security": [
           {
             "bearerAuth": []
@@ -497,17 +621,18 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Pending follow-ups list"
+            "description": "Pending enquiries"
           }
         }
       }
     },
+
     "/api/v1/employee/completed": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Tab 3: Get completed follow-ups for active shop",
+        "summary": "Get completed follow-ups",
         "security": [
           {
             "bearerAuth": []
@@ -541,17 +666,18 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Completed follow-ups list"
+            "description": "Completed enquiries"
           }
         }
       }
     },
+
     "/api/v1/employee/search": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Tab 4: Fast Customer Search by name, phone, tyre, vehicle",
+        "summary": "Search customer enquiries",
         "security": [
           {
             "bearerAuth": []
@@ -572,23 +698,23 @@ module.exports = {
             "required": true,
             "schema": {
               "type": "string"
-            },
-            "description": "Search keyword"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Matching search results"
+            "description": "Search results"
           }
         }
       }
     },
+
     "/api/v1/employee/enquiries/{id}": {
       "get": {
         "tags": [
           "Employee"
         ],
-        "summary": "Follow-up Detail: Get enquiry with full activity logs",
+        "summary": "Get enquiry details",
         "security": [
           {
             "bearerAuth": []
@@ -606,7 +732,6 @@ module.exports = {
           {
             "name": "shopId",
             "in": "query",
-            "required": false,
             "schema": {
               "type": "string"
             }
@@ -614,15 +739,16 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Enquiry details with logs"
+            "description": "Enquiry with activity logs"
           }
         }
       },
+
       "patch": {
         "tags": [
           "Employee"
         ],
-        "summary": "Follow-up Action: Update status, reschedule, remarks",
+        "summary": "Update enquiry",
         "security": [
           {
             "bearerAuth": []
@@ -655,12 +781,18 @@ module.exports = {
         }
       }
     },
+
+    /* =========================================================
+       ADMIN DASHBOARD
+       ========================================================= */
+
     "/api/v1/admin/dashboard": {
       "get": {
         "tags": [
           "Admin"
         ],
-        "summary": "Admin Dashboard: Aggregated & per-shop counts with conversion rates",
+        "summary": "Get Admin Dashboard",
+        "description": "Returns total enquiries, pending, completed, due today, overdue, conversion rate, active shops, active users and per-shop metrics.",
         "security": [
           {
             "bearerAuth": []
@@ -668,17 +800,29 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Dashboard metrics"
+            "description": "Dashboard metrics returned"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Admin access required"
           }
         }
       }
     },
+
+    /* =========================================================
+       ADMIN ENQUIRIES
+       ========================================================= */
+
     "/api/v1/admin/enquiries": {
       "get": {
         "tags": [
           "Admin"
         ],
-        "summary": "All Entries: Cross-shop view with filters",
+        "summary": "Get all enquiries",
+        "description": "Admin can view enquiries across shops within the organization.",
         "security": [
           {
             "bearerAuth": []
@@ -748,17 +892,18 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "List of entries across shops"
+            "description": "Enquiries returned"
           }
         }
       }
     },
+
     "/api/v1/admin/enquiries/{id}/reassign": {
       "patch": {
         "tags": [
           "Admin"
         ],
-        "summary": "Reassign enquiry to another employee",
+        "summary": "Reassign enquiry",
         "security": [
           {
             "bearerAuth": []
@@ -785,10 +930,12 @@ module.exports = {
                 ],
                 "properties": {
                   "assignedToUserId": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "employee-uuid"
                   },
                   "remarks": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Reassigned to another employee."
                   }
                 }
               }
@@ -797,17 +944,25 @@ module.exports = {
         },
         "responses": {
           "200": {
-            "description": "Reassigned successfully"
+            "description": "Enquiry reassigned successfully"
+          },
+          "400": {
+            "description": "Target employee is invalid"
+          },
+          "404": {
+            "description": "Enquiry not found"
           }
         }
       }
     },
+
     "/api/v1/admin/enquiries/{id}": {
       "delete": {
         "tags": [
           "Admin"
         ],
-        "summary": "Soft-delete an enquiry (is_deleted = 1)",
+        "summary": "Soft delete enquiry",
+        "description": "Sets customer_enquiries.is_deleted to 1.",
         "security": [
           {
             "bearerAuth": []
@@ -824,13 +979,15 @@ module.exports = {
           }
         ],
         "requestBody": {
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
                 "properties": {
                   "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Duplicate enquiry"
                   }
                 }
               }
@@ -839,43 +996,43 @@ module.exports = {
         },
         "responses": {
           "200": {
-            "description": "Soft deleted successfully"
+            "description": "Enquiry deleted successfully"
+          },
+          "404": {
+            "description": "Enquiry not found"
           }
         }
       }
     },
+
+    /* =========================================================
+       ADMIN SHOPS
+       ========================================================= */
+
     "/api/v1/admin/shops": {
       "get": {
         "tags": [
           "Admin"
         ],
         "summary": "List all shops",
+        "description": "Returns non-deleted shops for the Admin organization.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "parameters": [
-          {
-            "name": "includeInactive",
-            "in": "query",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "List of shops"
+            "description": "Shop list returned"
           }
         }
       },
+
       "post": {
         "tags": [
           "Admin"
         ],
-        "summary": "Add a new shop branch",
+        "summary": "Create shop",
         "security": [
           {
             "bearerAuth": []
@@ -893,17 +1050,21 @@ module.exports = {
         },
         "responses": {
           "201": {
-            "description": "Shop created"
+            "description": "Shop created successfully"
+          },
+          "400": {
+            "description": "Shop name or organization is missing"
           }
         }
       }
     },
+
     "/api/v1/admin/shops/{id}": {
       "patch": {
         "tags": [
           "Admin"
         ],
-        "summary": "Edit / rename shop details",
+        "summary": "Update shop",
         "security": [
           {
             "bearerAuth": []
@@ -920,25 +1081,31 @@ module.exports = {
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateShopRequest"
+                "$ref": "#/components/schemas/UpdateShopRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Shop updated"
+            "description": "Shop updated successfully"
+          },
+          "404": {
+            "description": "Shop not found or already deleted"
           }
         }
       },
+
       "delete": {
         "tags": [
           "Admin"
         ],
-        "summary": "Deactivate shop branch (is_active = 0)",
+        "summary": "Soft delete shop",
+        "description": "Sets is_active = 0 and is_deleted = true.",
         "security": [
           {
             "bearerAuth": []
@@ -956,17 +1123,22 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Shop deactivated"
+            "description": "Shop deleted successfully"
+          },
+          "404": {
+            "description": "Shop not found or already deleted"
           }
         }
       }
     },
-    "/api/v1/admin/users": {
-      "get": {
+
+    "/api/v1/admin/shops/{id}/deactivate": {
+      "patch": {
         "tags": [
           "Admin"
         ],
-        "summary": "List all users with their assigned branches",
+        "summary": "Deactivate shop",
+        "description": "Sets shops.is_active = 0. is_deleted remains false.",
         "security": [
           {
             "bearerAuth": []
@@ -974,25 +1146,87 @@ module.exports = {
         ],
         "parameters": [
           {
-            "name": "includeInactive",
-            "in": "query",
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "boolean",
-              "default": false
+              "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "List of users"
+            "description": "Shop deactivated successfully"
+          },
+          "404": {
+            "description": "Shop not found or already deleted"
+          }
+        }
+      }
+    },
+
+    "/api/v1/admin/shops/{id}/activate": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Activate shop",
+        "description": "Sets shops.is_active = 1. Shop must not be soft deleted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shop activated successfully"
+          },
+          "404": {
+            "description": "Shop not found or already deleted"
+          }
+        }
+      }
+    },
+
+    /* =========================================================
+       ADMIN USERS
+       ========================================================= */
+
+    "/api/v1/admin/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List users",
+        "description": "Returns ADMIN and EMPLOYEE users in the organization.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users returned"
           }
         }
       },
+
       "post": {
         "tags": [
           "Admin"
         ],
-        "summary": "Create a new employee or admin user",
+        "summary": "Create user",
+        "description": "Creates an ADMIN or EMPLOYEE user and optionally assigns shops.",
         "security": [
           {
             "bearerAuth": []
@@ -1010,17 +1244,21 @@ module.exports = {
         },
         "responses": {
           "201": {
-            "description": "User created"
+            "description": "User created successfully"
+          },
+          "400": {
+            "description": "Invalid user data"
           }
         }
       }
     },
+
     "/api/v1/admin/users/{id}": {
       "patch": {
         "tags": [
           "Admin"
         ],
-        "summary": "Edit user profile and shop assignments",
+        "summary": "Update user",
         "security": [
           {
             "bearerAuth": []
@@ -1037,49 +1275,31 @@ module.exports = {
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "phone": {
-                    "type": "string"
-                  },
-                  "fullName": {
-                    "type": "string"
-                  },
-                  "role": {
-                    "type": "string",
-                    "enum": [
-                      "EMPLOYEE",
-                      "ADMIN"
-                    ]
-                  },
-                  "isActive": {
-                    "type": "boolean"
-                  },
-                  "shopIds": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                }
+                "$ref": "#/components/schemas/UpdateUserRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "User updated"
+            "description": "User updated successfully"
+          },
+          "404": {
+            "description": "User not found"
           }
         }
       },
+
       "delete": {
         "tags": [
           "Admin"
         ],
-        "summary": "Deactivate user (Immediately blocks login with 403)",
+        "summary": "Soft delete user",
+        "description": "Sets users.is_active = 0 and users.is_deleted = true.",
         "security": [
           {
             "bearerAuth": []
@@ -1097,11 +1317,81 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "User deactivated"
+            "description": "User deleted successfully"
+          },
+          "404": {
+            "description": "User not found or already deleted"
           }
         }
       }
     },
+
+    "/api/v1/admin/users/{id}/deactivate": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Deactivate user",
+        "description": "Sets users.is_active = 0 while keeping is_deleted = false. User login will be blocked.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User deactivated successfully"
+          },
+          "404": {
+            "description": "User not found in your organization"
+          }
+        }
+      }
+    },
+
+    "/api/v1/admin/users/{id}/activate": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Activate user",
+        "description": "Sets users.is_active = 1. User must not be soft deleted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User activated successfully"
+          },
+          "404": {
+            "description": "User not found or already deleted"
+          }
+        }
+      }
+    },
+
     "/api/v1/admin/users/{id}/reset-password": {
       "post": {
         "tags": [
@@ -1135,7 +1425,7 @@ module.exports = {
                 "properties": {
                   "password": {
                     "type": "string",
-                    "example": "newpassword123"
+                    "example": "newPassword123"
                   }
                 }
               }
@@ -1144,17 +1434,26 @@ module.exports = {
         },
         "responses": {
           "200": {
-            "description": "Password reset successful"
+            "description": "Password reset successfully"
+          },
+          "404": {
+            "description": "User not found"
           }
         }
       }
     },
+
+    /* =========================================================
+       ADMIN CSV
+       ========================================================= */
+
     "/api/v1/admin/export/csv": {
       "get": {
         "tags": [
           "Admin"
         ],
-        "summary": "Download filtered enquiries as CSV",
+        "summary": "Export enquiries CSV",
+        "description": "Exports organization enquiry data as CSV.",
         "security": [
           {
             "bearerAuth": []
@@ -1174,24 +1473,42 @@ module.exports = {
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "CSV file download",
-            "content": {
-              "text/csv": {}
-            }
+            "description": "CSV export"
           }
         }
       }
     },
+
+    /* =========================================================
+       SUPER ADMIN
+       ========================================================= */
+
     "/api/v1/super-admin/dashboard": {
       "get": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Platform Overview: Global metrics across all organizations",
+        "summary": "Super Admin Dashboard",
         "security": [
           {
             "bearerAuth": []
@@ -1199,43 +1516,38 @@ module.exports = {
         ],
         "responses": {
           "200": {
-            "description": "Global metrics returned"
+            "description": "Global platform dashboard"
+          },
+          "403": {
+            "description": "Super Admin access required"
           }
         }
       }
     },
+
     "/api/v1/super-admin/organizations": {
       "get": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "List all tenant organizations with shop/user counts",
+        "summary": "List organizations",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "parameters": [
-          {
-            "name": "includeInactive",
-            "in": "query",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "Organizations list"
+            "description": "Organizations returned"
           }
         }
       },
+
       "post": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Create a new tenant organization (and optional initial Business Admin)",
+        "summary": "Create organization",
         "security": [
           {
             "bearerAuth": []
@@ -1258,12 +1570,13 @@ module.exports = {
         }
       }
     },
+
     "/api/v1/super-admin/organizations/{id}": {
       "get": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Get organization details with associated shops and staff",
+        "summary": "Get organization details",
         "security": [
           {
             "bearerAuth": []
@@ -1282,14 +1595,18 @@ module.exports = {
         "responses": {
           "200": {
             "description": "Organization details"
+          },
+          "404": {
+            "description": "Organization not found"
           }
         }
       },
+
       "patch": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Update organization metadata",
+        "summary": "Update organization",
         "security": [
           {
             "bearerAuth": []
@@ -1306,10 +1623,11 @@ module.exports = {
           }
         ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateOrganizationRequest"
+                "$ref": "#/components/schemas/UpdateOrganizationRequest"
               }
             }
           }
@@ -1320,11 +1638,70 @@ module.exports = {
           }
         }
       },
+
       "delete": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Deactivate organization (Suspends login for all users under this org)",
+        "summary": "Delete organization",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Organization deleted"
+          }
+        }
+      }
+    },
+
+    "/api/v1/super-admin/organizations/{id}/activate": {
+      "patch": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Activate organization",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Organization activated"
+          }
+        }
+      }
+    },
+
+    "/api/v1/super-admin/organizations/{id}/deactivate": {
+      "patch": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Deactivate organization",
         "security": [
           {
             "bearerAuth": []
@@ -1347,37 +1724,30 @@ module.exports = {
         }
       }
     },
+
     "/api/v1/super-admin/business-admins": {
       "get": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "List all Business Admins across all organizations",
+        "summary": "List business admins",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "parameters": [
-          {
-            "name": "organizationId",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "Business Admins list"
+            "description": "Business admins returned"
           }
         }
       },
+
       "post": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Create a Business Admin for an organization",
+        "summary": "Create business admin",
         "security": [
           {
             "bearerAuth": []
@@ -1395,17 +1765,18 @@ module.exports = {
         },
         "responses": {
           "201": {
-            "description": "Business Admin created"
+            "description": "Business admin created"
           }
         }
       }
     },
+
     "/api/v1/super-admin/business-admins/{id}": {
       "patch": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Update Business Admin details or reassign organization",
+        "summary": "Update business admin",
         "security": [
           {
             "bearerAuth": []
@@ -1421,17 +1792,36 @@ module.exports = {
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fullName": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Business Admin updated"
+            "description": "Business admin updated"
           }
         }
       },
+
       "delete": {
         "tags": [
           "Super Admin"
         ],
-        "summary": "Delete Business Admin",
+        "summary": "Delete business admin",
         "security": [
           {
             "bearerAuth": []
@@ -1454,5 +1844,6 @@ module.exports = {
         }
       }
     }
+
   }
 };
