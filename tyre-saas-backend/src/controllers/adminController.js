@@ -621,7 +621,6 @@ static async createShop(req, res, next) {
 
     const {
       name,
-      code,
       address,
       phone,
     } = req.body;
@@ -643,7 +642,6 @@ static async createShop(req, res, next) {
           id,
           organization_id,
           name,
-          code,
           address,
           phone,
           is_active,
@@ -653,10 +651,8 @@ static async createShop(req, res, next) {
           last_modified_at,
           last_modified_by
         )
-
         VALUES
         (
-          ?,
           ?,
           ?,
           ?,
@@ -674,7 +670,6 @@ static async createShop(req, res, next) {
         id,
         orgId,
         name,
-        code || null,
         address || null,
         phone || null,
         now,
@@ -698,6 +693,7 @@ static async createShop(req, res, next) {
       message: "Shop created successfully",
       data: shop,
     });
+
   } catch (error) {
     next(error);
   }
@@ -1077,7 +1073,7 @@ static async deactivateShop(req, res, next) {
   // CREATE USER
   // ============================================================
 
- static async createUser(req, res, next) {
+static async createUser(req, res, next) {
   try {
     const orgId = getOrgScope(req);
 
@@ -1195,6 +1191,7 @@ static async deactivateShop(req, res, next) {
 
     if (Array.isArray(shopIds)) {
       for (const shopId of shopIds) {
+
         const shop = await getOne(
           `
             SELECT id
@@ -1213,16 +1210,21 @@ static async deactivateShop(req, res, next) {
           continue;
         }
 
+        // Create employee/admin -> shop relationship
         await execute(
           `
             INSERT INTO user_shops
             (
               id,
               user_id,
-              shop_id
+              shop_id,
+              assigned_at,
+              assigned_by
             )
             VALUES
             (
+              ?,
+              ?,
               ?,
               ?,
               ?
@@ -1232,6 +1234,8 @@ static async deactivateShop(req, res, next) {
             uuid(),
             id,
             shopId,
+            now,
+            req.user.id,
           ]
         );
       }
@@ -1266,6 +1270,7 @@ static async deactivateShop(req, res, next) {
       message: "User created successfully",
       data: user,
     });
+
   } catch (error) {
     next(error);
   }
