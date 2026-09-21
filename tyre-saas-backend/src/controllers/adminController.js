@@ -632,6 +632,26 @@ static async createShop(req, res, next) {
       );
     }
 
+    // Check duplicate shop name in the same organization
+    const existingShop = await getOne(
+      `
+        SELECT id
+        FROM shops
+        WHERE organization_id = ?
+          AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+          AND is_deleted = false
+        LIMIT 1
+      `,
+      [orgId, name]
+    );
+
+    if (existingShop) {
+      throw new AppError(
+        "A shop with this name already exists in this organization",
+        409
+      );
+    }
+
     const id = uuid();
     const now = new Date().toISOString();
 
