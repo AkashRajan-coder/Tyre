@@ -709,7 +709,6 @@ static async updateShop(req, res, next) {
 
     const {
       name,
-      code,
       address,
       phone,
       isActive,
@@ -751,7 +750,6 @@ static async updateShop(req, res, next) {
         UPDATE shops
         SET
           name = ?,
-          code = ?,
           address = ?,
           phone = ?,
           is_active = ?,
@@ -762,11 +760,9 @@ static async updateShop(req, res, next) {
       `,
       [
         name ?? shop.name,
-        code ?? shop.code,
         address ?? shop.address,
         phone ?? shop.phone,
 
-        // shops.is_active = SMALLINT
         typeof isActive === "boolean"
           ? (isActive ? 1 : 0)
           : shop.is_active,
@@ -792,6 +788,7 @@ static async updateShop(req, res, next) {
       message: "Shop updated successfully",
       data: updatedShop,
     });
+
   } catch (error) {
     next(error);
   }
@@ -957,7 +954,7 @@ static async deactivateShop(req, res, next) {
   // Only active employees assigned to that shop
   // ============================================================
 
- static async listUsers(req, res, next) {
+static async listUsers(req, res, next) {
   try {
     const orgId = getOrgScope(req);
     const { shopId } = req.query;
@@ -973,9 +970,7 @@ static async deactivateShop(req, res, next) {
         is_deleted,
         created_at,
         last_modified_at
-
       FROM users
-
       WHERE role IN ('EMPLOYEE')
         AND is_deleted = FALSE
     `;
@@ -1040,7 +1035,6 @@ static async deactivateShop(req, res, next) {
           SELECT
             s.id,
             s.name,
-            s.code,
             s.is_active,
             s.is_deleted
 

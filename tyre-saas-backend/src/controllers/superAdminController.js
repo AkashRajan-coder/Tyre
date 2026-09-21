@@ -141,33 +141,49 @@ class SuperAdminController {
     }
   }
 
-  static async getOrganizationById(req, res, next) {
-    try {
-      const { id } = req.params;
-      const org = await getOne("SELECT * FROM organizations WHERE id = ?", [id]);
-      if (!org) {
-        throw new AppError("Organization not found", 404);
-      }
+static async getOrganizationById(req, res, next) {
+  try {
+    const { id } = req.params;
 
-      const [shops, admins, employees] = await Promise.all([
-        query("SELECT id, name, code, address, phone, is_active FROM shops WHERE organization_id = ? ORDER BY name ASC", [id]),
-        query("SELECT id, phone, full_name, role, is_active, created_at FROM users WHERE organization_id = ? AND role = 'ADMIN'", [id]),
-        query("SELECT id, phone, full_name, role, is_active, created_at FROM users WHERE organization_id = ? AND role = 'EMPLOYEE'", [id]),
-      ]);
+    const org = await getOne(
+      "SELECT * FROM organizations WHERE id = ?",
+      [id]
+    );
 
-      res.json({
-        success: true,
-        data: {
-          ...org,
-          shops,
-          businessAdmins: admins,
-          employees,
-        },
-      });
-    } catch (error) {
-      next(error);
+    if (!org) {
+      throw new AppError("Organization not found", 404);
     }
+
+    const [shops, admins, employees] = await Promise.all([
+      query(
+        "SELECT id, name, address, phone, is_active FROM shops WHERE organization_id = ? ORDER BY name ASC",
+        [id]
+      ),
+
+      query(
+        "SELECT id, phone, full_name, role, is_active, created_at FROM users WHERE organization_id = ? AND role = 'ADMIN'",
+        [id]
+      ),
+
+      query(
+        "SELECT id, phone, full_name, role, is_active, created_at FROM users WHERE organization_id = ? AND role = 'EMPLOYEE'",
+        [id]
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        ...org,
+        shops,
+        businessAdmins: admins,
+        employees,
+      },
+    });
+  } catch (error) {
+    next(error);
   }
+}
 
   static async updateOrganization(req, res, next) {
     try {

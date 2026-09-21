@@ -7,6 +7,7 @@ class AuthController {
   static async login(req, res, next) {
     try {
       const { phone, password } = req.body;
+
       if (!phone || !password) {
         throw new AppError("Phone and password are required", 400);
       }
@@ -20,42 +21,70 @@ class AuthController {
         throw new AppError("Invalid phone number or password", 401);
       }
 
-      const isMatch = await comparePassword(password, user.password_hash);
+      const isMatch = await comparePassword(
+        password,
+        user.password_hash
+      );
+
       if (!isMatch) {
-        throw new AppError("Invalid phone number or password", 401);
+        throw new AppError(
+          "Invalid phone number or password",
+          401
+        );
       }
 
       if (!user.is_active) {
-        throw new AppError("Account is deactivated. Please contact administrator.", 403);
+        throw new AppError(
+          "Account is deactivated. Please contact administrator.",
+          403
+        );
       }
 
       // Check organization status if user is bound to an organization
       let organization = null;
+
       if (user.organization_id) {
-        organization = await getOne("SELECT id, name, slug, is_active FROM organizations WHERE id = ?", [user.organization_id]);
+        organization = await getOne(
+          "SELECT id, name, slug, is_active FROM organizations WHERE id = ?",
+          [user.organization_id]
+        );
+
         if (organization && !organization.is_active) {
-          throw new AppError("Organization account is deactivated. Please contact platform support.", 403);
+          throw new AppError(
+            "Organization account is deactivated. Please contact platform support.",
+            403
+          );
         }
       }
 
-      // Fetch active assigned shops (for employees and admins)
+      // Fetch active assigned shops
       let assignedShops = [];
+
       if (user.role === "SUPER_ADMIN") {
         // Super Admin can view all active shops
-        assignedShops = await query("SELECT id, organization_id, name, code, address, phone FROM shops WHERE is_active = 1");
+        assignedShops = await query(
+          "SELECT id, organization_id, name, address, phone FROM shops WHERE is_active = 1"
+        );
       } else if (user.role === "ADMIN") {
         // Business Admin has access to all active shops in their organization
         assignedShops = await query(
-          "SELECT id, organization_id, name, code, address, phone FROM shops WHERE organization_id = ? AND is_active = 1",
+          "SELECT id, organization_id, name, address, phone FROM shops WHERE organization_id = ? AND is_active = 1",
           [user.organization_id]
         );
       } else {
         // Employee only has access to shops specifically assigned in user_shops
         assignedShops = await query(
-          `SELECT s.id, s.organization_id, s.name, s.code, s.address, s.phone
+          `SELECT
+             s.id,
+             s.organization_id,
+             s.name,
+             s.address,
+             s.phone
            FROM shops s
-           INNER JOIN user_shops us ON us.shop_id = s.id
-           WHERE us.user_id = ? AND s.is_active = 1`,
+           INNER JOIN user_shops us
+             ON us.shop_id = s.id
+           WHERE us.user_id = ?
+             AND s.is_active = 1`,
           [user.id]
         );
       }
@@ -75,7 +104,9 @@ class AuthController {
           user: {
             id: user.id,
             organizationId: user.organization_id,
-            organizationName: organization ? organization.name : null,
+            organizationName: organization
+              ? organization.name
+              : null,
             phone: user.phone,
             fullName: user.full_name,
             role: user.role,
@@ -101,19 +132,29 @@ class AuthController {
       }
 
       let assignedShops = [];
+
       if (user.role === "SUPER_ADMIN") {
-        assignedShops = await query("SELECT id, organization_id, name, code, address, phone FROM shops WHERE is_active = 1");
+        assignedShops = await query(
+          "SELECT id, organization_id, name, address, phone FROM shops WHERE is_active = 1"
+        );
       } else if (user.role === "ADMIN") {
         assignedShops = await query(
-          "SELECT id, organization_id, name, code, address, phone FROM shops WHERE organization_id = ? AND is_active = 1",
+          "SELECT id, organization_id, name, address, phone FROM shops WHERE organization_id = ? AND is_active = 1",
           [user.organization_id]
         );
       } else {
         assignedShops = await query(
-          `SELECT s.id, s.organization_id, s.name, s.code, s.address, s.phone
+          `SELECT
+             s.id,
+             s.organization_id,
+             s.name,
+             s.address,
+             s.phone
            FROM shops s
-           INNER JOIN user_shops us ON us.shop_id = s.id
-           WHERE us.user_id = ? AND s.is_active = 1`,
+           INNER JOIN user_shops us
+             ON us.shop_id = s.id
+           WHERE us.user_id = ?
+             AND s.is_active = 1`,
           [user.id]
         );
       }
