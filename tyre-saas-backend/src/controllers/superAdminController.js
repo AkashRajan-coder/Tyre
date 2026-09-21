@@ -385,7 +385,38 @@ static async getOrganizationById(req, res, next) {
       next(error);
     }
   }
+static async activateBusinessAdmin(req, res, next) {
+  try {
+    const { id } = req.params;
 
+    const user = await getOne(
+      "SELECT id, role FROM users WHERE id = ?",
+      [id]
+    );
+
+    if (!user || user.role !== "ADMIN") {
+      throw new AppError("Business Admin not found", 404);
+    }
+
+    const now = new Date().toISOString();
+
+    await execute(
+      `UPDATE users
+       SET is_active = 1,
+           last_modified_at = ?,
+           last_modified_by = ?
+       WHERE id = ?`,
+      [now, req.user.id, id]
+    );
+
+    res.json({
+      success: true,
+      message: "Business Admin activated successfully. Login is now allowed.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
   static async deleteBusinessAdmin(req, res, next) {
     try {
       const { id } = req.params;

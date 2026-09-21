@@ -24,5 +24,9 @@ router.patch("/business-admins/:id", SuperAdminController.updateBusinessAdmin);
 router.post("/business-admins/:id/reset-password", SuperAdminController.resetBusinessAdminPassword);
 router.delete("/business-admins/:id", SuperAdminController.deleteBusinessAdmin);
 router.patch("/business-admins/:id/deactivate", SuperAdminController.deactivateBusinessAdmin);
+router.patch(
+  "/business-admins/:id/activate",
+  SuperAdminController.activateBusinessAdmin
+);
 
 module.exports = router;
