@@ -623,6 +623,7 @@ static async createShop(req, res, next) {
       name,
       address,
       phone,
+      gstNumber,
     } = req.body;
 
     if (!name) {
@@ -632,7 +633,6 @@ static async createShop(req, res, next) {
       );
     }
 
-    // Check duplicate shop name in the same organization
     const existingShop = await getOne(
       `
         SELECT id
@@ -664,6 +664,7 @@ static async createShop(req, res, next) {
           name,
           address,
           phone,
+          gst_number,
           is_active,
           is_deleted,
           created_at,
@@ -673,6 +674,7 @@ static async createShop(req, res, next) {
         )
         VALUES
         (
+          ?,
           ?,
           ?,
           ?,
@@ -692,6 +694,7 @@ static async createShop(req, res, next) {
         name,
         address || null,
         phone || null,
+        gstNumber || null,
         now,
         req.user.id,
         now,
@@ -731,6 +734,7 @@ static async updateShop(req, res, next) {
       name,
       address,
       phone,
+      gstNumber,
       isActive,
     } = req.body;
 
@@ -772,6 +776,7 @@ static async updateShop(req, res, next) {
           name = ?,
           address = ?,
           phone = ?,
+          gst_number = ?,
           is_active = ?,
           last_modified_at = ?,
           last_modified_by = ?
@@ -782,6 +787,7 @@ static async updateShop(req, res, next) {
         name ?? shop.name,
         address ?? shop.address,
         phone ?? shop.phone,
+        gstNumber ?? shop.gst_number,
 
         typeof isActive === "boolean"
           ? (isActive ? 1 : 0)
@@ -1932,6 +1938,123 @@ static async activateUser(req, res, next) {
     res.json({
       success: true,
       message: "User activated successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+  // ============================================================
+  // LIST ALL SHOPS WITH EMPLOYEES
+  //
+  // Active + Deactivated shops
+  // Soft deleted shops hidden
+  //
+  // Each shop includes:
+  // - Employee count
+  // - Employee details
+  // ============================================================
+
+ // ============================================================
+// LIST ALL SHOPS WITH EMPLOYEES
+//
+// Active + Deactivated shops
+// Soft deleted shops hidden
+//
+// Each shop includes:
+// - Employee count
+// - Employee details
+// ============================================================
+
+static async getShopsWithEmployees(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+
+    // --------------------------------------------------------
+    // Get shops
+    // --------------------------------------------------------
+
+    let shopSql = `
+      SELECT
+        id,
+        organization_id,
+        name,
+        address,
+        phone,
+        gst_number,
+        is_active,
+        is_deleted,
+        created_at,
+        created_by,
+        last_modified_at,
+        last_modified_by
+      FROM shops
+      WHERE is_deleted = FALSE
+    `;
+
+    const shopParams = [];
+
+    if (orgId) {
+      shopSql += `
+        AND organization_id = ?
+      `;
+
+      shopParams.push(orgId);
+    }
+
+    shopSql += `
+      ORDER BY name ASC
+    `;
+
+    const shops = await query(
+      shopSql,
+      shopParams
+    );
+
+    // --------------------------------------------------------
+    // Attach employees to each shop
+    // --------------------------------------------------------
+
+    for (const shop of shops) {
+      const employees = await query(
+        `
+          SELECT
+            u.id,
+            u.organization_id,
+            u.phone,
+            u.full_name,
+            u.role,
+            u.is_active,
+            u.is_deleted,
+            u.created_at,
+            u.last_modified_at
+
+          FROM users u
+
+          INNER JOIN user_shops us
+            ON us.user_id = u.id
+
+          WHERE us.shop_id = ?
+            AND u.role = 'EMPLOYEE'
+            AND u.is_deleted = FALSE
+            AND u.organization_id = ?
+
+          ORDER BY u.full_name ASC
+        `,
+        [
+          shop.id,
+          shop.organization_id,
+        ]
+      );
+
+      shop.employeeCount = employees.length;
+      shop.employees = employees;
+    }
+
+    res.json({
+      success: true,
+      data: shops,
     });
   } catch (error) {
     next(error);

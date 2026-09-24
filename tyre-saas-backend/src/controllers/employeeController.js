@@ -174,77 +174,143 @@ class EmployeeController {
   // 4. Tab 1: Add Customer Enquiry
   // RULE: shop_id is set at entry creation and never changes.
   static async createEnquiry(req, res, next) {
-    try {
-      const {
+  try {
+    const {
+      shopId,
+      customerName,
+      customerPhone,
+      vehicleModel,
+      vehicleReg,
+      tyreSize,
+      tyreBrand,
+      quantity = 4,
+      estimatedBudget,
+      followUpDate,
+      remarks,
+      fitStatus,
+      leadSource,
+    } = req.body;
+
+    if (!shopId || !customerName || !customerPhone || !followUpDate) {
+      throw new AppError(
+        "shopId, customerName, customerPhone, and followUpDate are required",
+        400
+      );
+    }
+
+    const validFitStatuses = ["FIT", "NOT_FIT"];
+    const validLeadSources = ["MOBILE", "INSTAGRAM", "OFFLINE"];
+
+    if (fitStatus && !validFitStatuses.includes(fitStatus)) {
+      throw new AppError(
+        "Invalid fitStatus. Must be FIT or NOT_FIT",
+        400
+      );
+    }
+
+    if (leadSource && !validLeadSources.includes(leadSource)) {
+      throw new AppError(
+        "Invalid leadSource. Must be MOBILE, INSTAGRAM, or OFFLINE",
+        400
+      );
+    }
+
+    const shop = await verifyShopAccess(
+      req.user.id,
+      req.user.role,
+      req.user.organizationId,
+      shopId
+    );
+
+    const id = uuid();
+    const now = new Date().toISOString();
+    const followUpIso = new Date(followUpDate).toISOString();
+
+    await execute(
+      `INSERT INTO customer_enquiries (
+        id,
+        organization_id,
+        shop_id,
+        customer_name,
+        customer_phone,
+        vehicle_model,
+        vehicle_reg,
+        tyre_size,
+        tyre_brand,
+        quantity,
+        estimated_budget,
+        follow_up_date,
+        status,
+        remarks,
+        assigned_to_user_id,
+        fit_status,
+        lead_source,
+        is_deleted,
+        created_at,
+        created_by,
+        last_modified_at,
+        last_modified_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+      [
+        id,
+        shop.organization_id,
         shopId,
         customerName,
         customerPhone,
-        vehicleModel,
-        vehicleReg,
-        tyreSize,
-        tyreBrand,
-        quantity = 4,
-        estimatedBudget,
-        followUpDate,
+        vehicleModel || null,
+        vehicleReg || null,
+        tyreSize || null,
+        tyreBrand || null,
+        quantity,
+        estimatedBudget || null,
+        followUpIso,
+        remarks || null,
+        req.user.id,
+        fitStatus || null,
+        leadSource || null,
+        now,
+        req.user.id,
+        now,
+        req.user.id,
+      ]
+    );
+
+    // Create activity log
+    await execute(
+      `INSERT INTO enquiry_logs (
+        id,
+        enquiry_id,
+        action,
+        new_value,
         remarks,
-      } = req.body;
+        created_by_id,
+        created_at
+      )
+      VALUES (?, ?, 'CREATED', ?, ?, ?, ?)`,
+      [
+        uuid(),
+        id,
+        `Created enquiry for ${customerName}`,
+        remarks || "Initial entry",
+        req.user.id,
+        now,
+      ]
+    );
 
-      if (!shopId || !customerName || !customerPhone || !followUpDate) {
-        throw new AppError("shopId, customerName, customerPhone, and followUpDate are required", 400);
-      }
+    const created = await getOne(
+      "SELECT * FROM customer_enquiries WHERE id = ?",
+      [id]
+    );
 
-      const shop = await verifyShopAccess(req.user.id, req.user.role, req.user.organizationId, shopId);
-
-      const id = uuid();
-      const now = new Date().toISOString();
-      const followUpIso = new Date(followUpDate).toISOString();
-
-      await execute(
-        `INSERT INTO customer_enquiries (
-          id, organization_id, shop_id, customer_name, customer_phone, vehicle_model, vehicle_reg, tyre_size, tyre_brand,
-          quantity, estimated_budget, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
-          created_at, created_by, last_modified_at, last_modified_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
-        [
-          id,
-          shop.organization_id,
-          shopId,
-          customerName,
-          customerPhone,
-          vehicleModel || null,
-          vehicleReg || null,
-          tyreSize || null,
-          tyreBrand || null,
-          quantity,
-          estimatedBudget || null,
-          followUpIso,
-          remarks || null,
-          req.user.id,
-          now,
-          req.user.id,
-          now,
-          req.user.id,
-        ]
-      );
-
-      // Create activity log
-      await execute(
-        `INSERT INTO enquiry_logs (id, enquiry_id, action, new_value, remarks, created_by_id, created_at)
-         VALUES (?, ?, 'CREATED', ?, ?, ?, ?)`,
-        [uuid(), id, `Created enquiry for ${customerName}`, remarks || "Initial entry", req.user.id, now]
-      );
-
-      const created = await getOne("SELECT * FROM customer_enquiries WHERE id = ?", [id]);
-
-      res.status(201).json({
-        success: true,
-        message: "Customer enquiry created successfully",
-        data: created,
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(201).json({
+      success: true,
+      message: "Customer enquiry created successfully",
+      data: created,
+    });
+  } catch (error) {
+    next(error);
   }
+}
 
   // 5. Tab 2: Pending Follow-ups list
   static async getPending(req, res, next) {

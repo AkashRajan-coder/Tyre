@@ -141,4 +141,9 @@ router.get(
   AdminController.exportCsv
 );
 
+router.get(
+  "/shops-with-employees",
+  AdminController.getShopsWithEmployees
+);
+
 module.exports = router;
