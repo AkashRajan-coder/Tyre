@@ -2060,6 +2060,389 @@ static async getShopsWithEmployees(req, res, next) {
     next(error);
   }
 }
+
+// ============================================================
+// TYRE SIZE MASTER
+// ============================================================
+
+// CREATE TYRE SIZE
+static async createTyreSize(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+
+    if (!orgId) {
+      throw new AppError(
+        "organizationId is required",
+        400
+      );
+    }
+
+    const { size } = req.body;
+
+    if (!size || !size.trim()) {
+      throw new AppError(
+        "Tyre size is required",
+        400
+      );
+    }
+
+    const normalizedSize = size.trim();
+
+    // Check duplicate within same organization
+    const existingSize = await getOne(
+      `
+        SELECT id
+        FROM tyre_sizes
+        WHERE organization_id = ?
+          AND LOWER(TRIM(size)) = LOWER(TRIM(?))
+          AND is_active = 1
+        LIMIT 1
+      `,
+      [
+        orgId,
+        normalizedSize,
+      ]
+    );
+
+    if (existingSize) {
+      throw new AppError(
+        "This tyre size already exists",
+        409
+      );
+    }
+
+    const id = uuid();
+    const now = new Date().toISOString();
+
+    await execute(
+      `
+        INSERT INTO tyre_sizes
+        (
+          id,
+          organization_id,
+          size,
+          is_active,
+          created_at,
+          created_by,
+          last_modified_at,
+          last_modified_by
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          ?,
+          1,
+          ?,
+          ?,
+          ?,
+          ?
+        )
+      `,
+      [
+        id,
+        orgId,
+        normalizedSize,
+        now,
+        req.user.id,
+        now,
+        req.user.id,
+      ]
+    );
+
+    const tyreSize = await getOne(
+      `
+        SELECT *
+        FROM tyre_sizes
+        WHERE id = ?
+      `,
+      [id]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Tyre size created successfully",
+      data: tyreSize,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+// LIST TYRE SIZES
+static async listTyreSizes(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+
+    let sql = `
+      SELECT *
+      FROM tyre_sizes
+      WHERE 1 = 1
+    `;
+
+    const params = [];
+
+    if (orgId) {
+      sql += `
+        AND organization_id = ?
+      `;
+
+      params.push(orgId);
+    }
+
+    sql += `
+      ORDER BY size ASC
+    `;
+
+    const tyreSizes = await query(
+      sql,
+      params
+    );
+
+    res.json({
+      success: true,
+      data: tyreSizes,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+// UPDATE TYRE SIZE
+static async updateTyreSize(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+    const { id } = req.params;
+    const { size } = req.body;
+
+    if (!size || !size.trim()) {
+      throw new AppError(
+        "Tyre size is required",
+        400
+      );
+    }
+
+    const normalizedSize = size.trim();
+
+    // Find existing size
+    let checkSql = `
+      SELECT *
+      FROM tyre_sizes
+      WHERE id = ?
+    `;
+
+    const checkParams = [id];
+
+    if (orgId) {
+      checkSql += `
+        AND organization_id = ?
+      `;
+
+      checkParams.push(orgId);
+    }
+
+    const tyreSize = await getOne(
+      checkSql,
+      checkParams
+    );
+
+    if (!tyreSize) {
+      throw new AppError(
+        "Tyre size not found or access denied",
+        404
+      );
+    }
+
+    // Check duplicate
+    const duplicateSize = await getOne(
+      `
+        SELECT id
+        FROM tyre_sizes
+        WHERE organization_id = ?
+          AND LOWER(TRIM(size)) = LOWER(TRIM(?))
+          AND id != ?
+          AND is_active = 1
+        LIMIT 1
+      `,
+      [
+        tyreSize.organization_id,
+        normalizedSize,
+        id,
+      ]
+    );
+
+    if (duplicateSize) {
+      throw new AppError(
+        "This tyre size already exists",
+        409
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    await execute(
+      `
+        UPDATE tyre_sizes
+        SET
+          size = ?,
+          last_modified_at = ?,
+          last_modified_by = ?
+        WHERE id = ?
+      `,
+      [
+        normalizedSize,
+        now,
+        req.user.id,
+        id,
+      ]
+    );
+
+    const updatedTyreSize = await getOne(
+      `
+        SELECT *
+        FROM tyre_sizes
+        WHERE id = ?
+      `,
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: "Tyre size updated successfully",
+      data: updatedTyreSize,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+// DEACTIVATE TYRE SIZE
+static async deactivateTyreSize(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+    const { id } = req.params;
+
+    let checkSql = `
+      SELECT id
+      FROM tyre_sizes
+      WHERE id = ?
+        AND is_active = 1
+    `;
+
+    const checkParams = [id];
+
+    if (orgId) {
+      checkSql += `
+        AND organization_id = ?
+      `;
+
+      checkParams.push(orgId);
+    }
+
+    const tyreSize = await getOne(
+      checkSql,
+      checkParams
+    );
+
+    if (!tyreSize) {
+      throw new AppError(
+        "Tyre size not found or already inactive",
+        404
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    await execute(
+      `
+        UPDATE tyre_sizes
+        SET
+          is_active = 0,
+          last_modified_at = ?,
+          last_modified_by = ?
+        WHERE id = ?
+      `,
+      [
+        now,
+        req.user.id,
+        id,
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: "Tyre size deactivated successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+// ACTIVATE TYRE SIZE
+static async activateTyreSize(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+    const { id } = req.params;
+
+    let checkSql = `
+      SELECT id
+      FROM tyre_sizes
+      WHERE id = ?
+        AND is_active = 0
+    `;
+
+    const checkParams = [id];
+
+    if (orgId) {
+      checkSql += `
+        AND organization_id = ?
+      `;
+
+      checkParams.push(orgId);
+    }
+
+    const tyreSize = await getOne(
+      checkSql,
+      checkParams
+    );
+
+    if (!tyreSize) {
+      throw new AppError(
+        "Tyre size not found or already active",
+        404
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    await execute(
+      `
+        UPDATE tyre_sizes
+        SET
+          is_active = 1,
+          last_modified_at = ?,
+          last_modified_by = ?
+        WHERE id = ?
+      `,
+      [
+        now,
+        req.user.id,
+        id,
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: "Tyre size activated successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 }
 
 module.exports = AdminController;

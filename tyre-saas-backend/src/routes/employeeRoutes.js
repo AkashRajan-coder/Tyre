@@ -1,4 +1,6 @@
 const express = require("express");
+const EnquiryTyreOptionController = require("../controllers/EnquiryTyreOptionController");
+const TyreProductController = require("../controllers/TyreProductController");
 const EmployeeController = require("../controllers/employeeController");
 const { requireAuth } = require("../middlewares/auth");
 
@@ -32,5 +34,33 @@ router.get("/enquiries/:id", EmployeeController.getById);
 
 // 9. Follow-up Action: update status, reschedule, remarks
 router.patch("/enquiries/:id", EmployeeController.updateEnquiry);
+router.get(
+  "/tyre-products",
+  TyreProductController.listAvailableTyreProducts
+);
+
+// Enquiry Tyre Options
+router.get(
+  "/enquiries/:enquiryId/tyre-options",
+  EnquiryTyreOptionController.listOptions
+);
+
+router.post(
+  "/enquiries/:enquiryId/tyre-options",
+  EnquiryTyreOptionController.createOption
+);
+
+router.patch(
+  "/enquiries/:enquiryId/tyre-options/:id",
+  EnquiryTyreOptionController.updateOption
+);
+
+router.delete(
+  "/enquiries/:enquiryId/tyre-options/:id",
+  EnquiryTyreOptionController.deleteOption
+);
+router.get("/unfit", EmployeeController.getUnfit);
+
+
 
 module.exports = router;

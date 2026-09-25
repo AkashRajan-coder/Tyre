@@ -1,6 +1,8 @@
 const express = require("express");
-
+const TyreBrandController = require("../controllers/TyreBrandController");
 const AdminController = require("../controllers/adminController");
+const TargetController = require("../controllers/TargetController");
+const TyreProductController = require("../controllers/TyreProductController");
 
 const {
   requireAuth,
@@ -131,7 +133,88 @@ router.post(
   AdminController.resetPassword
 );
 
+router.get(
+  "/tyre-sizes",
+  AdminController.listTyreSizes
+);
 
+router.post(
+  "/tyre-sizes",
+  AdminController.createTyreSize
+);
+
+router.patch(
+  "/tyre-sizes/:id",
+  AdminController.updateTyreSize
+);
+
+router.patch(
+  "/tyre-sizes/:id/deactivate",
+  AdminController.deactivateTyreSize
+);
+
+router.patch(
+  "/tyre-sizes/:id/activate",
+  AdminController.activateTyreSize
+);
+
+// ============================================================
+// TYRE BRAND MASTER
+// ============================================================
+
+router.get(
+  "/tyre-brands",
+  TyreBrandController.listTyreBrands
+);
+
+router.post(
+  "/tyre-brands",
+  TyreBrandController.createTyreBrand
+);
+
+router.patch(
+  "/tyre-brands/:id",
+  TyreBrandController.updateTyreBrand
+);
+
+router.patch(
+  "/tyre-brands/:id/deactivate",
+  TyreBrandController.deactivateTyreBrand
+);
+
+router.patch(
+  "/tyre-brands/:id/activate",
+  TyreBrandController.activateTyreBrand
+);
+
+// ============================================================
+// TYRE PRODUCT MASTER
+// ============================================================
+
+router.get(
+  "/tyre-products",
+  TyreProductController.listTyreProducts
+);
+
+router.post(
+  "/tyre-products",
+  TyreProductController.createTyreProduct
+);
+
+router.patch(
+  "/tyre-products/:id",
+  TyreProductController.updateTyreProduct
+);
+
+router.patch(
+  "/tyre-products/:id/deactivate",
+  TyreProductController.deactivateTyreProduct
+);
+
+router.patch(
+  "/tyre-products/:id/activate",
+  TyreProductController.activateTyreProduct
+);
 // ============================================================
 // CSV Export
 // ============================================================
@@ -144,6 +227,28 @@ router.get(
 router.get(
   "/shops-with-employees",
   AdminController.getShopsWithEmployees
+);
+// ============================================================
+// TARGET ROUTES
+// ============================================================
+
+router.post("/targets", TargetController.createTarget);
+
+router.get("/targets/current", TargetController.getCurrentTarget);
+
+router.get(
+  "/targets/dashboard",
+  TargetController.getTargetDashboard
+);
+
+router.patch(
+  "/targets/:id",
+  TargetController.updateTarget
+);
+
+router.get(
+  "/targets/history",
+  TargetController.getTargetHistory
 );
 
 module.exports = router;
