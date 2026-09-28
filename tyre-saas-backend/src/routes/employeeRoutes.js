@@ -2,6 +2,7 @@ const express = require("express");
 const EnquiryTyreOptionController = require("../controllers/EnquiryTyreOptionController");
 const TyreProductController = require("../controllers/TyreProductController");
 const EmployeeController = require("../controllers/employeeController");
+const TargetController=require("../controllers/TargetController");
 const { requireAuth } = require("../middlewares/auth");
 
 const router = express.Router();
@@ -62,6 +63,8 @@ router.delete(
 router.get("/unfit", EmployeeController.getUnfit);
 router.get("/car-brands", EmployeeController.getCarBrands);
 router.get("/car-models", EmployeeController.getCarModels);
+
+router.get("/target-dashboard", TargetController.getTargetDashboard);
 
 
 
