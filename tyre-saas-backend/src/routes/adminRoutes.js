@@ -2,6 +2,8 @@ const express = require("express");
 const TyreBrandController = require("../controllers/TyreBrandController");
 const AdminController = require("../controllers/adminController");
 const TargetController = require("../controllers/TargetController");
+const CarBrandController = require("../controllers/carBrandController");
+const CarModelController = require("../controllers/CarModelController");
 const TyreProductController = require("../controllers/TyreProductController");
 
 const {
@@ -251,4 +253,28 @@ router.get(
   TargetController.getTargetHistory
 );
 
+
+router.get("/car-brands", CarBrandController.listCarBrands);
+router.post("/car-brands", CarBrandController.createCarBrand);
+router.patch("/car-brands/:id", CarBrandController.updateCarBrand);
+router.patch(
+  "/car-brands/:id/deactivate",
+  CarBrandController.deactivateCarBrand
+);
+router.patch(
+  "/car-brands/:id/activate",
+  CarBrandController.activateCarBrand
+);
+
+router.get("/car-models", CarModelController.listCarModels);
+router.post("/car-models", CarModelController.createCarModel);
+router.patch("/car-models/:id", CarModelController.updateCarModel);
+router.patch(
+  "/car-models/:id/deactivate",
+  CarModelController.deactivateCarModel
+);
+router.patch(
+  "/car-models/:id/activate",
+  CarModelController.activateCarModel
+);
 module.exports = router;

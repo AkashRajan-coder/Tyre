@@ -60,6 +60,8 @@ router.delete(
   EnquiryTyreOptionController.deleteOption
 );
 router.get("/unfit", EmployeeController.getUnfit);
+router.get("/car-brands", EmployeeController.getCarBrands);
+router.get("/car-models", EmployeeController.getCarModels);
 
 
 

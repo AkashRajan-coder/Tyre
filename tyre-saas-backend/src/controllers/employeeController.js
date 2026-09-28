@@ -420,353 +420,431 @@ class EmployeeController {
   // ============================================================
   // 4. CREATE CUSTOMER ENQUIRY
   // ============================================================
+// ============================================================
+// 4. CREATE CUSTOMER ENQUIRY
+// ============================================================
 
-  static async createEnquiry(req, res, next) {
-    try {
+static async createEnquiry(req, res, next) {
+  try {
+    const {
+      shopId,
 
-      const {
+      customerName,
+      customerPhone,
+
+      vehicleModel,
+      vehicleReg,
+
+      carBrandId,
+      carModelId,
+
+      vehicleType,
+
+      tyreSize,
+      tyreBrand,
+
+      quantity = 4,
+      estimatedBudget,
+
+      followUpDate,
+      remarks,
+
+      fitStatus,
+
+      leadSource,
+
+      enquiryType,
+
+      wheelAlignment,
+
+      suitableShopId,
+
+      notFitLocation,
+    } = req.body;
+
+    // --------------------------------------------------------
+    // Required fields
+    // --------------------------------------------------------
+
+    if (
+      !shopId ||
+      !customerName ||
+      !customerPhone ||
+      !followUpDate
+    ) {
+      throw new AppError(
+        "shopId, customerName, customerPhone, and followUpDate are required",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Valid FIT status
+    // --------------------------------------------------------
+
+    const validFitStatuses = [
+      "FIT",
+      "NOT_FIT",
+    ];
+
+    if (
+      fitStatus &&
+      !validFitStatuses.includes(fitStatus)
+    ) {
+      throw new AppError(
+        "Invalid fitStatus. Must be FIT or NOT_FIT",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Lead Source
+    // --------------------------------------------------------
+
+    const validLeadSources = [
+      "DIRECT_WALK_IN",
+      "REFERRAL",
+      "TELEPHONE",
+    ];
+
+    if (
+      leadSource &&
+      !validLeadSources.includes(leadSource)
+    ) {
+      throw new AppError(
+        "Invalid leadSource. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Enquiry Type
+    // --------------------------------------------------------
+
+    const validEnquiryTypes = [
+      "DIRECT_WALK_IN",
+      "REFERRAL",
+      "TELEPHONE",
+    ];
+
+    if (
+      enquiryType &&
+      !validEnquiryTypes.includes(enquiryType)
+    ) {
+      throw new AppError(
+        "Invalid enquiryType. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Vehicle Type
+    // --------------------------------------------------------
+
+    const validVehicleTypes = [
+      "TWO_WHEELER",
+      "FOUR_WHEELER",
+    ];
+
+    if (
+      vehicleType &&
+      !validVehicleTypes.includes(vehicleType)
+    ) {
+      throw new AppError(
+        "Invalid vehicleType. Must be TWO_WHEELER or FOUR_WHEELER",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Verify shop access
+    // --------------------------------------------------------
+
+    const shop = await verifyShopAccess(
+      req.user.id,
+      req.user.role,
+      req.user.organizationId,
+      shopId
+    );
+
+    // --------------------------------------------------------
+    // Car Brand / Car Model validation
+    // FOUR_WHEELER only
+    // --------------------------------------------------------
+
+    let selectedVehicleModel = vehicleModel || null;
+
+    if (vehicleType === "FOUR_WHEELER") {
+      if (!carBrandId || !carModelId) {
+        throw new AppError(
+          "carBrandId and carModelId are required for FOUR_WHEELER",
+          400
+        );
+      }
+
+      const carModel = await getOne(
+        `
+          SELECT
+            cm.id,
+            cm.name,
+            cm.car_brand_id,
+            cb.name AS brand_name
+          FROM car_models cm
+          JOIN car_brands cb
+            ON cb.id = cm.car_brand_id
+          WHERE cm.id = ?
+            AND cm.car_brand_id = ?
+            AND cm.organization_id = ?
+            AND cm.is_active = 1
+            AND cb.is_active = 1
+        `,
+        [
+          carModelId,
+          carBrandId,
+          req.user.organizationId,
+        ]
+      );
+
+      if (!carModel) {
+        throw new AppError(
+          "Invalid car brand or car model",
+          400
+        );
+      }
+
+      // Store the master car model name
+      // in the existing vehicle_model column.
+      selectedVehicleModel = carModel.name;
+    }
+
+    // --------------------------------------------------------
+    // Verify suitable shop if provided
+    // --------------------------------------------------------
+
+    if (suitableShopId) {
+      await verifyShopAccess(
+        req.user.id,
+        req.user.role,
+        req.user.organizationId,
+        suitableShopId
+      );
+    }
+
+    // --------------------------------------------------------
+    // Generate IDs / Dates
+    // --------------------------------------------------------
+
+    const id = uuid();
+
+    const now = new Date().toISOString();
+
+    const followUpIso =
+      new Date(followUpDate).toISOString();
+
+    // --------------------------------------------------------
+    // Insert enquiry
+    // --------------------------------------------------------
+
+    await execute(
+      `
+        INSERT INTO customer_enquiries
+        (
+          id,
+          organization_id,
+          shop_id,
+
+          customer_name,
+          customer_phone,
+
+          vehicle_model,
+          vehicle_reg,
+
+          car_brand_id,
+          car_model_id,
+
+          vehicle_type,
+
+          tyre_size,
+          tyre_brand,
+
+          quantity,
+          estimated_budget,
+
+          follow_up_date,
+          status,
+          remarks,
+
+          assigned_to_user_id,
+
+          fit_status,
+          lead_source,
+          enquiry_type,
+
+          wheel_alignment,
+          suitable_shop_id,
+          not_fit_location,
+
+          is_deleted,
+
+          created_at,
+          created_by,
+
+          last_modified_at,
+          last_modified_by
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          'PENDING',
+          ?,
+
+          ?,
+
+          ?,
+          ?,
+          ?,
+
+          ?,
+          ?,
+          ?,
+
+          0,
+
+          ?,
+          ?,
+
+          ?,
+          ?
+        )
+      `,
+      [
+        id,
+        shop.organization_id,
         shopId,
 
         customerName,
         customerPhone,
 
-        vehicleModel,
-        vehicleReg,
+        selectedVehicleModel,
+        vehicleReg || null,
 
-        vehicleType,
+        carBrandId || null,
+        carModelId || null,
 
-        tyreSize,
-        tyreBrand,
+        vehicleType || null,
 
-        quantity = 4,
-        estimatedBudget,
+        tyreSize || null,
+        tyreBrand || null,
 
-        followUpDate,
-        remarks,
+        quantity,
+        estimatedBudget || null,
 
-        fitStatus,
+        followUpIso,
+        remarks || null,
 
-        leadSource,
-
-        enquiryType,
-
-        wheelAlignment,
-
-        suitableShopId,
-
-        notFitLocation,
-      } = req.body;
-
-      // --------------------------------------------------------
-      // Required fields
-      // --------------------------------------------------------
-
-      if (
-        !shopId ||
-        !customerName ||
-        !customerPhone ||
-        !followUpDate
-      ) {
-        throw new AppError(
-          "shopId, customerName, customerPhone, and followUpDate are required",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Valid FIT status
-      // --------------------------------------------------------
-
-      const validFitStatuses = [
-        "FIT",
-        "NOT_FIT",
-      ];
-
-      if (
-        fitStatus &&
-        !validFitStatuses.includes(fitStatus)
-      ) {
-        throw new AppError(
-          "Invalid fitStatus. Must be FIT or NOT_FIT",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Lead Source
-      // Existing values preserved
-      // --------------------------------------------------------
-
-   const validLeadSources = [
-  "DIRECT_WALK_IN",
-  "REFERRAL",
-  "TELEPHONE",
-];
-
-      if (
-        leadSource &&
-        !validLeadSources.includes(leadSource)
-      ) {
-       throw new AppError(
-  "Invalid leadSource. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
-  400
-);
-      }
-
-      // --------------------------------------------------------
-      // Enquiry Type
-      // --------------------------------------------------------
-
-      const validEnquiryTypes = [
-        "DIRECT_WALK_IN",
-        "REFERRAL",
-        "TELEPHONE",
-      ];
-
-      if (
-        enquiryType &&
-        !validEnquiryTypes.includes(enquiryType)
-      ) {
-        throw new AppError(
-          "Invalid enquiryType. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Vehicle Type
-      // --------------------------------------------------------
-
-      const validVehicleTypes = [
-        "TWO_WHEELER",
-        "FOUR_WHEELER",
-      ];
-
-      if (
-        vehicleType &&
-        !validVehicleTypes.includes(vehicleType)
-      ) {
-        throw new AppError(
-          "Invalid vehicleType. Must be TWO_WHEELER or FOUR_WHEELER",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Verify shop access
-      // --------------------------------------------------------
-
-      const shop = await verifyShopAccess(
         req.user.id,
-        req.user.role,
-        req.user.organizationId,
-        shopId
-      );
 
-      // --------------------------------------------------------
-      // Verify suitable shop if provided
-      // --------------------------------------------------------
+        fitStatus || null,
+        leadSource || null,
+        enquiryType || null,
 
-      if (suitableShopId) {
-        await verifyShopAccess(
-          req.user.id,
-          req.user.role,
-          req.user.organizationId,
-          suitableShopId
-        );
-      }
+        wheelAlignment || null,
+        suitableShopId || null,
+        notFitLocation || null,
 
-      const id = uuid();
+        now,
+        req.user.id,
 
-      const now = new Date().toISOString();
+        now,
+        req.user.id,
+      ]
+    );
 
-      const followUpIso =
-        new Date(followUpDate).toISOString();
+    // --------------------------------------------------------
+    // Activity log
+    // --------------------------------------------------------
 
-      // --------------------------------------------------------
-      // Insert enquiry
-      // --------------------------------------------------------
-
-      await execute(
-        `
-          INSERT INTO customer_enquiries
-          (
-            id,
-            organization_id,
-            shop_id,
-
-            customer_name,
-            customer_phone,
-
-            vehicle_model,
-            vehicle_reg,
-            vehicle_type,
-
-            tyre_size,
-            tyre_brand,
-
-            quantity,
-            estimated_budget,
-
-            follow_up_date,
-            status,
-            remarks,
-
-            assigned_to_user_id,
-
-            fit_status,
-            lead_source,
-            enquiry_type,
-
-            wheel_alignment,
-            suitable_shop_id,
-            not_fit_location,
-
-            is_deleted,
-
-            created_at,
-            created_by,
-
-            last_modified_at,
-            last_modified_by
-          )
-          VALUES
-          (
-            ?,
-            ?,
-            ?,
-
-            ?,
-            ?,
-
-            ?,
-            ?,
-            ?,
-
-            ?,
-            ?,
-
-            ?,
-            ?,
-
-            ?,
-            'PENDING',
-            ?,
-
-            ?,
-
-            ?,
-            ?,
-            ?,
-
-            ?,
-            ?,
-            ?,
-
-            0,
-
-            ?,
-            ?,
-
-            ?,
-            ?
-          )
-        `,
-        [
+    await execute(
+      `
+        INSERT INTO enquiry_logs
+        (
           id,
-          shop.organization_id,
-          shopId,
+          enquiry_id,
+          action,
+          new_value,
+          remarks,
+          created_by_id,
+          created_at
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          'CREATED',
+          ?,
+          ?,
+          ?,
+          ?
+        )
+      `,
+      [
+        uuid(),
+        id,
+        `Created enquiry for ${customerName}`,
+        remarks || "Initial entry",
+        req.user.id,
+        now,
+      ]
+    );
 
-          customerName,
-          customerPhone,
+    // --------------------------------------------------------
+    // Get created enquiry
+    // --------------------------------------------------------
 
-          vehicleModel || null,
-          vehicleReg || null,
-          vehicleType || null,
+    const created = await getOne(
+      `
+        SELECT *
+        FROM customer_enquiries
+        WHERE id = ?
+      `,
+      [id]
+    );
 
-          tyreSize || null,
-          tyreBrand || null,
+    // --------------------------------------------------------
+    // Response
+    // --------------------------------------------------------
 
-          quantity,
-          estimatedBudget || null,
+    res.status(201).json({
+      success: true,
+      message: "Customer enquiry created successfully",
+      data: created,
+    });
 
-          followUpIso,
-          remarks || null,
-
-          req.user.id,
-
-          fitStatus || null,
-          leadSource || null,
-          enquiryType || null,
-
-          wheelAlignment || null,
-          suitableShopId || null,
-          notFitLocation || null,
-
-          now,
-          req.user.id,
-
-          now,
-          req.user.id,
-        ]
-      );
-
-      // --------------------------------------------------------
-      // Activity log
-      // --------------------------------------------------------
-
-      await execute(
-        `
-          INSERT INTO enquiry_logs
-          (
-            id,
-            enquiry_id,
-            action,
-            new_value,
-            remarks,
-            created_by_id,
-            created_at
-          )
-          VALUES
-          (
-            ?,
-            ?,
-            'CREATED',
-            ?,
-            ?,
-            ?,
-            ?
-          )
-        `,
-        [
-          uuid(),
-          id,
-          `Created enquiry for ${customerName}`,
-          remarks || "Initial entry",
-          req.user.id,
-          now,
-        ]
-      );
-
-      const created = await getOne(
-        `
-          SELECT *
-          FROM customer_enquiries
-          WHERE id = ?
-        `,
-        [id]
-      );
-
-      res.status(201).json({
-        success: true,
-        message: "Customer enquiry created successfully",
-        data: created,
-      });
-
-    } catch (error) {
-      next(error);
-    }
+  } catch (error) {
+    next(error);
   }
+}
 
   // ============================================================
   // 5. PENDING
@@ -1245,497 +1323,537 @@ class EmployeeController {
   // 10. UPDATE ENQUIRY
   // ============================================================
 
-  static async updateEnquiry(req, res, next) {
-    try {
+ // ============================================================
+// UPDATE CUSTOMER ENQUIRY
+// ============================================================
 
-      const { id } = req.params;
+static async updateEnquiry(req, res, next) {
+  try {
+    const { id } = req.params;
 
-      const {
-        status,
-        followUpDate,
-        remarks,
+    const {
+      status,
 
-        customerName,
-        vehicleModel,
-        vehicleReg,
-        vehicleType,
+      followUpDate,
+      remarks,
 
-        tyreSize,
-        tyreBrand,
+      customerName,
+      vehicleModel,
+      vehicleReg,
 
-        quantity,
-        estimatedBudget,
+      carBrandId,
+      carModelId,
 
-        fitStatus,
-        leadSource,
-        enquiryType,
+      vehicleType,
 
-        wheelAlignment,
-        suitableShopId,
-        notFitLocation,
-      } = req.body;
+      tyreSize,
+      tyreBrand,
+      quantity,
 
-      // --------------------------------------------------------
-      // Validate status
-      // --------------------------------------------------------
+      estimatedBudget,
 
-      const validStatuses = [
-        "PENDING",
-        "COMPLETED",
-        "CANCELLED",
-        "LOST",
-      ];
+      fitStatus,
 
-      if (
-        status &&
-        !validStatuses.includes(status)
-      ) {
-        throw new AppError(
-          `Invalid status: ${status}. Must be one of: ${validStatuses.join(", ")}`,
-          400
-        );
-      }
+      leadSource,
 
-      // --------------------------------------------------------
-      // Validate FIT status
-      // --------------------------------------------------------
+      enquiryType,
 
-      const validFitStatuses = [
-        "FIT",
-        "NOT_FIT",
-      ];
+      wheelAlignment,
 
-      if (
-        fitStatus &&
-        !validFitStatuses.includes(fitStatus)
-      ) {
-        throw new AppError(
-          "Invalid fitStatus. Must be FIT or NOT_FIT",
-          400
-        );
-      }
+      suitableShopId,
 
-      // --------------------------------------------------------
-      // Validate Lead Source
-      // --------------------------------------------------------
+      notFitLocation,
+    } = req.body;
 
-      const validLeadSources = [
-        "MOBILE",
-        "INSTAGRAM",
-        "OFFLINE",
-      ];
+    // --------------------------------------------------------
+    // Get existing enquiry
+    // --------------------------------------------------------
 
-      if (
-        leadSource &&
-        !validLeadSources.includes(leadSource)
-      ) {
-        throw new AppError(
-          "Invalid leadSource. Must be MOBILE, INSTAGRAM, or OFFLINE",
-          400
-        );
-      }
+    const enquiry = await getOne(
+      `
+        SELECT *
+        FROM customer_enquiries
+        WHERE id = ?
+          AND is_deleted = 0
+      `,
+      [id]
+    );
 
-      // --------------------------------------------------------
-      // Validate Enquiry Type
-      // --------------------------------------------------------
-
-      const validEnquiryTypes = [
-        "DIRECT_WALK_IN",
-        "REFERRAL",
-        "TELEPHONE",
-      ];
-
-      if (
-        enquiryType &&
-        !validEnquiryTypes.includes(enquiryType)
-      ) {
-        throw new AppError(
-          "Invalid enquiryType. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Validate Vehicle Type
-      // --------------------------------------------------------
-
-      const validVehicleTypes = [
-        "TWO_WHEELER",
-        "FOUR_WHEELER",
-      ];
-
-      if (
-        vehicleType &&
-        !validVehicleTypes.includes(vehicleType)
-      ) {
-        throw new AppError(
-          "Invalid vehicleType. Must be TWO_WHEELER or FOUR_WHEELER",
-          400
-        );
-      }
-
-      // --------------------------------------------------------
-      // Find existing enquiry
-      // --------------------------------------------------------
-
-      const existing = await getOne(
-        `
-          SELECT *
-          FROM customer_enquiries
-          WHERE id = ?
-        `,
-        [id]
+    if (!enquiry) {
+      throw new AppError(
+        "Enquiry not found",
+        404
       );
+    }
 
-      if (!existing || existing.is_deleted) {
-        throw new AppError(
-          "Enquiry not found",
-          404
-        );
-      }
+    // --------------------------------------------------------
+    // Organization check
+    // --------------------------------------------------------
 
-      // --------------------------------------------------------
-      // Organization isolation
-      // --------------------------------------------------------
-
-      if (
-        req.user.role !== "SUPER_ADMIN" &&
-        existing.organization_id !==
-          req.user.organizationId
-      ) {
-        throw new AppError(
-          "Enquiry not found",
-          404
-        );
-      }
-
-      // --------------------------------------------------------
-      // Shop active check
-      // --------------------------------------------------------
-
-      const shop = await getOne(
-        "SELECT is_active FROM shops WHERE id = ?",
-        [existing.shop_id]
+    if (
+      req.user.role !== "SUPER_ADMIN" &&
+      enquiry.organization_id !== req.user.organizationId
+    ) {
+      throw new AppError(
+        "Access denied",
+        403
       );
+    }
 
-      if (
-        shop &&
-        !shop.is_active
-      ) {
+    // --------------------------------------------------------
+    // Verify enquiry shop access
+    // --------------------------------------------------------
+
+    await verifyShopAccess(
+      req.user.id,
+      req.user.role,
+      req.user.organizationId,
+      enquiry.shop_id
+    );
+
+    // --------------------------------------------------------
+    // Status validation
+    // --------------------------------------------------------
+
+    const validStatuses = [
+      "PENDING",
+      "COMPLETED",
+      "CANCELLED",
+      "LOST",
+    ];
+
+    if (
+      status &&
+      !validStatuses.includes(status)
+    ) {
+      throw new AppError(
+        "Invalid status. Must be PENDING, COMPLETED, CANCELLED, or LOST",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Fit status validation
+    // --------------------------------------------------------
+
+    const validFitStatuses = [
+      "FIT",
+      "NOT_FIT",
+    ];
+
+    if (
+      fitStatus &&
+      !validFitStatuses.includes(fitStatus)
+    ) {
+      throw new AppError(
+        "Invalid fitStatus. Must be FIT or NOT_FIT",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Lead source validation
+    // --------------------------------------------------------
+
+    const validLeadSources = [
+      "DIRECT_WALK_IN",
+      "REFERRAL",
+      "TELEPHONE",
+    ];
+
+    if (
+      leadSource &&
+      !validLeadSources.includes(leadSource)
+    ) {
+      throw new AppError(
+        "Invalid leadSource. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Enquiry type validation
+    // --------------------------------------------------------
+
+    const validEnquiryTypes = [
+      "DIRECT_WALK_IN",
+      "REFERRAL",
+      "TELEPHONE",
+    ];
+
+    if (
+      enquiryType &&
+      !validEnquiryTypes.includes(enquiryType)
+    ) {
+      throw new AppError(
+        "Invalid enquiryType. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Vehicle type validation
+    // --------------------------------------------------------
+
+    const validVehicleTypes = [
+      "TWO_WHEELER",
+      "FOUR_WHEELER",
+    ];
+
+    if (
+      vehicleType &&
+      !validVehicleTypes.includes(vehicleType)
+    ) {
+      throw new AppError(
+        "Invalid vehicleType. Must be TWO_WHEELER or FOUR_WHEELER",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Determine final vehicle type
+    // --------------------------------------------------------
+
+    const finalVehicleType =
+      vehicleType || enquiry.vehicle_type;
+
+    // --------------------------------------------------------
+    // Car Brand / Car Model validation
+    // --------------------------------------------------------
+
+    let finalCarBrandId =
+      carBrandId !== undefined
+        ? carBrandId
+        : enquiry.car_brand_id;
+
+    let finalCarModelId =
+      carModelId !== undefined
+        ? carModelId
+        : enquiry.car_model_id;
+
+    let finalVehicleModel =
+      vehicleModel !== undefined
+        ? vehicleModel
+        : enquiry.vehicle_model;
+
+    if (finalVehicleType === "FOUR_WHEELER") {
+      if (!finalCarBrandId || !finalCarModelId) {
         throw new AppError(
-          "Cannot modify enquiry for a deactivated shop",
+          "carBrandId and carModelId are required for FOUR_WHEELER",
           400
         );
       }
 
-      // --------------------------------------------------------
-      // Employee assignment
-      // --------------------------------------------------------
-
-      if (
-        req.user.role === "EMPLOYEE"
-      ) {
-        const isAssigned = await getOne(
-          `
-            SELECT id
-            FROM user_shops
-            WHERE user_id = ?
-              AND shop_id = ?
-          `,
-          [
-            req.user.id,
-            existing.shop_id,
-          ]
-        );
-
-        if (!isAssigned) {
-          throw new AppError(
-            "Access denied: You are not assigned to this shop",
-            403
-          );
-        }
-      }
-
-      // --------------------------------------------------------
-      // Suitable shop validation
-      // --------------------------------------------------------
-
-      if (suitableShopId) {
-        await verifyShopAccess(
-          req.user.id,
-          req.user.role,
-          req.user.organizationId,
-          suitableShopId
-        );
-      }
-
-      const now =
-        new Date().toISOString();
-
-      const logs = [];
-
-      // --------------------------------------------------------
-      // Status
-      // --------------------------------------------------------
-
-      let newStatus =
-        existing.status;
-
-      if (
-        status &&
-        status !== existing.status
-      ) {
-        newStatus = status;
-
-        logs.push({
-          action: "STATUS_CHANGE",
-          oldVal: existing.status,
-          newVal: status,
-        });
-      }
-
-      // --------------------------------------------------------
-      // Follow-up date
-      // --------------------------------------------------------
-
-      let newDate =
-        existing.follow_up_date;
-
-      if (followUpDate) {
-        const parsedDate =
-          new Date(
-            followUpDate
-          ).toISOString();
-
-        if (
-          parsedDate !==
-          existing.follow_up_date
-        ) {
-          newDate = parsedDate;
-
-          logs.push({
-            action: "RESCHEDULE",
-            oldVal:
-              existing.follow_up_date,
-            newVal:
-              parsedDate,
-          });
-        }
-      }
-
-      // --------------------------------------------------------
-      // Remarks
-      // --------------------------------------------------------
-
-      let newRemarks =
-        existing.remarks;
-
-      if (
-        remarks !== undefined
-      ) {
-        newRemarks = remarks;
-
-        logs.push({
-          action: "NOTE_UPDATED",
-          oldVal:
-            existing.remarks,
-          newVal: remarks,
-          remarks,
-        });
-      }
-
-      // --------------------------------------------------------
-      // FIT STATUS log
-      // --------------------------------------------------------
-
-      if (
-        fitStatus &&
-        fitStatus !== existing.fit_status
-      ) {
-        logs.push({
-          action: "FIT_STATUS_CHANGE",
-          oldVal:
-            existing.fit_status,
-          newVal:
-            fitStatus,
-        });
-      }
-
-      // --------------------------------------------------------
-      // Enquiry Type log
-      // --------------------------------------------------------
-
-      if (
-        enquiryType &&
-        enquiryType !== existing.enquiry_type
-      ) {
-        logs.push({
-          action: "ENQUIRY_TYPE_CHANGE",
-          oldVal:
-            existing.enquiry_type,
-          newVal:
-            enquiryType,
-        });
-      }
-
-      // --------------------------------------------------------
-      // Update enquiry
-      // --------------------------------------------------------
-
-      await execute(
+      const carModel = await getOne(
         `
-          UPDATE customer_enquiries
-          SET
-            status = ?,
-            follow_up_date = ?,
-            remarks = ?,
-
-            customer_name =
-              COALESCE(?, customer_name),
-
-            vehicle_model =
-              COALESCE(?, vehicle_model),
-
-            vehicle_reg =
-              COALESCE(?, vehicle_reg),
-
-            vehicle_type =
-              COALESCE(?, vehicle_type),
-
-            tyre_size =
-              COALESCE(?, tyre_size),
-
-            tyre_brand =
-              COALESCE(?, tyre_brand),
-
-            quantity =
-              COALESCE(?, quantity),
-
-            estimated_budget =
-              COALESCE(?, estimated_budget),
-
-            fit_status =
-              COALESCE(?, fit_status),
-
-            lead_source =
-              COALESCE(?, lead_source),
-
-            enquiry_type =
-              COALESCE(?, enquiry_type),
-
-            wheel_alignment =
-              COALESCE(?, wheel_alignment),
-
-            suitable_shop_id =
-              COALESCE(?, suitable_shop_id),
-
-            not_fit_location =
-              COALESCE(?, not_fit_location),
-
-            last_modified_at = ?,
-            last_modified_by = ?
-
-          WHERE id = ?
+          SELECT
+            cm.id,
+            cm.name,
+            cm.car_brand_id,
+            cb.name AS brand_name
+          FROM car_models cm
+          JOIN car_brands cb
+            ON cb.id = cm.car_brand_id
+          WHERE cm.id = ?
+            AND cm.car_brand_id = ?
+            AND cm.organization_id = ?
+            AND cm.is_active = 1
+            AND cb.is_active = 1
         `,
         [
-          newStatus,
-          newDate,
-          newRemarks,
-
-          customerName || null,
-          vehicleModel || null,
-          vehicleReg || null,
-          vehicleType || null,
-
-          tyreSize || null,
-          tyreBrand || null,
-
-          quantity !== undefined
-            ? quantity
-            : null,
-
-          estimatedBudget !== undefined
-            ? estimatedBudget
-            : null,
-
-          fitStatus || null,
-          leadSource || null,
-          enquiryType || null,
-
-          wheelAlignment || null,
-          suitableShopId || null,
-          notFitLocation || null,
-
-          now,
-          req.user.id,
-
-          id,
+          finalCarModelId,
+          finalCarBrandId,
+          req.user.organizationId,
         ]
       );
 
-      // --------------------------------------------------------
-      // Activity logs
-      // --------------------------------------------------------
-
-      for (const log of logs) {
-        await execute(
-          `
-            INSERT INTO enquiry_logs
-            (
-              id,
-              enquiry_id,
-              action,
-              old_value,
-              new_value,
-              remarks,
-              created_by_id,
-              created_at
-            )
-            VALUES
-            (
-              ?,
-              ?,
-              ?,
-              ?,
-              ?,
-              ?,
-              ?,
-              ?
-            )
-          `,
-          [
-            uuid(),
-            id,
-            log.action,
-            log.oldVal || null,
-            log.newVal || null,
-            log.remarks || null,
-            req.user.id,
-            now,
-          ]
+      if (!carModel) {
+        throw new AppError(
+          "Invalid car brand or car model",
+          400
         );
       }
 
-      const updated =
-        await getOne(
-          `
-            SELECT *
-            FROM customer_enquiries
-            WHERE id = ?
-          `,
-          [id]
-        );
-
-      res.json({
-        success: true,
-        message: "Enquiry updated successfully",
-        data: updated,
-      });
-
-    } catch (error) {
-      next(error);
+      // Store master model name in existing vehicle_model field
+      finalVehicleModel = carModel.name;
     }
+
+    // --------------------------------------------------------
+    // TWO_WHEELER
+    // --------------------------------------------------------
+
+    if (finalVehicleType === "TWO_WHEELER") {
+      finalCarBrandId = null;
+      finalCarModelId = null;
+    }
+
+    // --------------------------------------------------------
+    // Verify suitable shop
+    // --------------------------------------------------------
+
+    if (suitableShopId) {
+      await verifyShopAccess(
+        req.user.id,
+        req.user.role,
+        req.user.organizationId,
+        suitableShopId
+      );
+    }
+
+    // --------------------------------------------------------
+    // Dates
+    // --------------------------------------------------------
+
+    const finalFollowUpDate =
+      followUpDate !== undefined
+        ? new Date(followUpDate).toISOString()
+        : enquiry.follow_up_date;
+
+    const now = new Date().toISOString();
+
+    // --------------------------------------------------------
+    // Update enquiry
+    // --------------------------------------------------------
+
+    await execute(
+      `
+        UPDATE customer_enquiries
+        SET
+          status = COALESCE(?, status),
+
+          follow_up_date = COALESCE(
+            ?,
+            follow_up_date
+          ),
+
+          remarks = COALESCE(
+            ?,
+            remarks
+          ),
+
+          customer_name = COALESCE(
+            ?,
+            customer_name
+          ),
+
+          vehicle_model = COALESCE(
+            ?,
+            vehicle_model
+          ),
+
+          vehicle_reg = COALESCE(
+            ?,
+            vehicle_reg
+          ),
+
+          car_brand_id = ?,
+
+          car_model_id = ?,
+
+          vehicle_type = COALESCE(
+            ?,
+            vehicle_type
+          ),
+
+          tyre_size = COALESCE(
+            ?,
+            tyre_size
+          ),
+
+          tyre_brand = COALESCE(
+            ?,
+            tyre_brand
+          ),
+
+          quantity = COALESCE(
+            ?,
+            quantity
+          ),
+
+          estimated_budget = COALESCE(
+            ?,
+            estimated_budget
+          ),
+
+          fit_status = COALESCE(
+            ?,
+            fit_status
+          ),
+
+          lead_source = COALESCE(
+            ?,
+            lead_source
+          ),
+
+          enquiry_type = COALESCE(
+            ?,
+            enquiry_type
+          ),
+
+          wheel_alignment = COALESCE(
+            ?,
+            wheel_alignment
+          ),
+
+          suitable_shop_id = COALESCE(
+            ?,
+            suitable_shop_id
+          ),
+
+          not_fit_location = COALESCE(
+            ?,
+            not_fit_location
+          ),
+
+          last_modified_at = ?,
+          last_modified_by = ?
+
+        WHERE id = ?
+      `,
+      [
+        status || null,
+
+        finalFollowUpDate,
+
+        remarks !== undefined
+          ? remarks
+          : null,
+
+        customerName || null,
+
+        finalVehicleModel,
+
+        vehicleReg || null,
+
+        finalCarBrandId,
+
+        finalCarModelId,
+
+        finalVehicleType || null,
+
+        tyreSize || null,
+
+        tyreBrand || null,
+
+        quantity || null,
+
+        estimatedBudget || null,
+
+        fitStatus || null,
+
+        leadSource || null,
+
+        enquiryType || null,
+
+        wheelAlignment || null,
+
+        suitableShopId || null,
+
+        notFitLocation || null,
+
+        now,
+        req.user.id,
+
+        id,
+      ]
+    );
+
+    // --------------------------------------------------------
+    // Get updated enquiry
+    // --------------------------------------------------------
+
+    const updated = await getOne(
+      `
+        SELECT *
+        FROM customer_enquiries
+        WHERE id = ?
+      `,
+      [id]
+    );
+
+    // --------------------------------------------------------
+    // Response
+    // --------------------------------------------------------
+
+    res.json({
+      success: true,
+      message: "Customer enquiry updated successfully",
+      data: updated,
+    });
+
+  } catch (error) {
+    next(error);
   }
+}
+
+  // =========================
+// LIST CAR BRANDS
+// =========================
+static async getCarBrands(req, res, next) {
+  try {
+    const organizationId = req.user.organizationId;
+
+    const brands = await query(
+      `
+        SELECT
+          id,
+          name
+        FROM car_brands
+        WHERE organization_id = ?
+          AND is_active = 1
+        ORDER BY name ASC
+      `,
+      [organizationId]
+    );
+
+    res.json({
+      success: true,
+      data: brands,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// =========================
+// LIST CAR MODELS
+// =========================
+static async getCarModels(req, res, next) {
+  try {
+    const organizationId = req.user.organizationId;
+    const { brandId } = req.query;
+
+    if (!brandId) {
+      throw new AppError("brandId is required", 400);
+    }
+
+    const models = await query(
+      `
+        SELECT
+          cm.id,
+          cm.name,
+          cm.car_brand_id,
+          cb.name AS brand_name
+        FROM car_models cm
+        JOIN car_brands cb
+          ON cb.id = cm.car_brand_id
+        WHERE cm.organization_id = ?
+          AND cm.car_brand_id = ?
+          AND cm.is_active = 1
+          AND cb.is_active = 1
+        ORDER BY cm.name ASC
+      `,
+      [organizationId, brandId]
+    );
+
+    res.json({
+      success: true,
+      data: models,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 }
 
 module.exports = EmployeeController;
