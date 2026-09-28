@@ -48,6 +48,34 @@ function getMonthRange(year, month) {
   };
 }
 
+// ============================================================
+// VERIFY SHOP BELONGS TO ORGANIZATION
+// ============================================================
+
+async function verifyShopOrganization(shopId, organizationId) {
+  const shop = await getOne(
+    `
+    SELECT
+      id,
+      organization_id,
+      name
+    FROM shops
+    WHERE id = ?
+      AND organization_id = ?
+  `,
+    [shopId, organizationId]
+  );
+
+  if (!shop) {
+    throw new AppError(
+      "Shop not found or does not belong to this organization",
+      404
+    );
+  }
+
+  return shop;
+}
+
 const TargetController = {
   // ============================================================
   // CREATE TARGET
@@ -61,6 +89,7 @@ const TargetController = {
       }
 
       const {
+        shopId,
         targetYear,
         targetMonth,
         amountTarget,
@@ -68,17 +97,31 @@ const TargetController = {
         tyreTargetType = "TOTAL",
       } = req.body;
 
+      // --------------------------------------------------------
+      // Required fields
+      // --------------------------------------------------------
+
       if (
+        !shopId ||
         targetYear === undefined ||
         targetMonth === undefined ||
         amountTarget === undefined ||
         tyreTarget === undefined
       ) {
         throw new AppError(
-          "targetYear, targetMonth, amountTarget and tyreTarget are required",
+          "shopId, targetYear, targetMonth, amountTarget and tyreTarget are required",
           400
         );
       }
+
+      // --------------------------------------------------------
+      // Verify shop
+      // --------------------------------------------------------
+
+      await verifyShopOrganization(
+        shopId,
+        organizationId
+      );
 
       const year = Number(targetYear);
       const month = Number(targetMonth);
@@ -89,28 +132,44 @@ const TargetController = {
       validateTargetType(tyreTargetType);
 
       if (!Number.isFinite(amount) || amount < 0) {
-        throw new AppError("amountTarget must be 0 or greater", 400);
+        throw new AppError(
+          "amountTarget must be 0 or greater",
+          400
+        );
       }
 
       if (!Number.isInteger(tyre) || tyre < 0) {
-        throw new AppError("tyreTarget must be 0 or greater", 400);
+        throw new AppError(
+          "tyreTarget must be 0 or greater",
+          400
+        );
       }
 
+      // --------------------------------------------------------
       // Check duplicate target
+      // Same shop + same month + same year
+      // --------------------------------------------------------
+
       const existingTarget = await getOne(
         `
         SELECT id
         FROM monthly_targets
         WHERE organization_id = ?
+          AND shop_id = ?
           AND target_year = ?
           AND target_month = ?
         `,
-        [organizationId, year, month]
+        [
+          organizationId,
+          shopId,
+          year,
+          month,
+        ]
       );
 
       if (existingTarget) {
         throw new AppError(
-          "Target already exists for this organization and month",
+          "Target already exists for this shop and month",
           409
         );
       }
@@ -118,11 +177,16 @@ const TargetController = {
       const id = uuid();
       const now = new Date().toISOString();
 
+      // --------------------------------------------------------
+      // INSERT TARGET
+      // --------------------------------------------------------
+
       await execute(
         `
         INSERT INTO monthly_targets (
           id,
           organization_id,
+          shop_id,
           target_year,
           target_month,
           amount_target,
@@ -133,11 +197,12 @@ const TargetController = {
           last_modified_at,
           last_modified_by
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           id,
           organizationId,
+          shopId,
           year,
           month,
           amount,
@@ -152,9 +217,13 @@ const TargetController = {
 
       const target = await getOne(
         `
-        SELECT *
-        FROM monthly_targets
-        WHERE id = ?
+        SELECT
+          mt.*,
+          s.name AS shop_name
+        FROM monthly_targets mt
+        LEFT JOIN shops s
+          ON s.id = mt.shop_id
+        WHERE mt.id = ?
         `,
         [id]
       );
@@ -177,8 +246,27 @@ const TargetController = {
       const organizationId = getOrgScope(req);
 
       if (!organizationId) {
-        throw new AppError("organizationId is required", 400);
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
       }
+
+      const {
+        shopId,
+      } = req.query;
+
+      if (!shopId) {
+        throw new AppError(
+          "shopId query parameter is required",
+          400
+        );
+      }
+
+      await verifyShopOrganization(
+        shopId,
+        organizationId
+      );
 
       const now = new Date();
 
@@ -192,20 +280,34 @@ const TargetController = {
 
       validateMonthYear(month, year);
 
+      // --------------------------------------------------------
+      // GET SHOP TARGET
+      // --------------------------------------------------------
+
       const target = await getOne(
         `
-        SELECT *
-        FROM monthly_targets
-        WHERE organization_id = ?
-          AND target_year = ?
-          AND target_month = ?
+        SELECT
+          mt.*,
+          s.name AS shop_name
+        FROM monthly_targets mt
+        LEFT JOIN shops s
+          ON s.id = mt.shop_id
+        WHERE mt.organization_id = ?
+          AND mt.shop_id = ?
+          AND mt.target_year = ?
+          AND mt.target_month = ?
         `,
-        [organizationId, year, month]
+        [
+          organizationId,
+          shopId,
+          year,
+          month,
+        ]
       );
 
       if (!target) {
         throw new AppError(
-          "No target found for the selected month",
+          "No target found for the selected shop and month",
           404
         );
       }
@@ -227,8 +329,27 @@ const TargetController = {
       const organizationId = getOrgScope(req);
 
       if (!organizationId) {
-        throw new AppError("organizationId is required", 400);
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
       }
+
+      const {
+        shopId,
+      } = req.query;
+
+      if (!shopId) {
+        throw new AppError(
+          "shopId query parameter is required",
+          400
+        );
+      }
+
+      await verifyShopOrganization(
+        shopId,
+        organizationId
+      );
 
       const now = new Date();
 
@@ -245,20 +366,31 @@ const TargetController = {
       // --------------------------------------------------------
       // GET TARGET
       // --------------------------------------------------------
+
       const target = await getOne(
         `
-        SELECT *
-        FROM monthly_targets
-        WHERE organization_id = ?
-          AND target_year = ?
-          AND target_month = ?
+        SELECT
+          mt.*,
+          s.name AS shop_name
+        FROM monthly_targets mt
+        LEFT JOIN shops s
+          ON s.id = mt.shop_id
+        WHERE mt.organization_id = ?
+          AND mt.shop_id = ?
+          AND mt.target_year = ?
+          AND mt.target_month = ?
         `,
-        [organizationId, year, month]
+        [
+          organizationId,
+          shopId,
+          year,
+          month,
+        ]
       );
 
       if (!target) {
         throw new AppError(
-          "No target found for the selected month",
+          "No target found for the selected shop and month",
           404
         );
       }
@@ -266,10 +398,11 @@ const TargetController = {
       // --------------------------------------------------------
       // DATE RANGE
       // --------------------------------------------------------
-      const { startDate, nextMonth } = getMonthRange(
-        year,
-        month
-      );
+
+      const {
+        startDate,
+        nextMonth,
+      } = getMonthRange(year, month);
 
       // --------------------------------------------------------
       // ACHIEVEMENT
@@ -280,6 +413,9 @@ const TargetController = {
       // ONLY:
       // status = COMPLETED
       // is_deleted = 0
+      //
+      // IMPORTANT:
+      // Achievement is now SHOP-WISE
       // --------------------------------------------------------
 
       let achievementSql = `
@@ -288,6 +424,7 @@ const TargetController = {
           COALESCE(SUM(quantity), 0) AS achieved_tyres
         FROM customer_enquiries
         WHERE organization_id = ?
+          AND shop_id = ?
           AND status = 'COMPLETED'
           AND is_deleted = 0
           AND created_at >= ?
@@ -296,25 +433,37 @@ const TargetController = {
 
       const achievementParams = [
         organizationId,
+        shopId,
         startDate,
         nextMonth,
       ];
 
+      // --------------------------------------------------------
       // Vehicle type filter
-      if (target.tyre_target_type === "TWO_WHEELER") {
+      // --------------------------------------------------------
+
+      if (
+        target.tyre_target_type === "TWO_WHEELER"
+      ) {
         achievementSql += `
           AND vehicle_type = ?
         `;
 
-        achievementParams.push("TWO_WHEELER");
+        achievementParams.push(
+          "TWO_WHEELER"
+        );
       }
 
-      if (target.tyre_target_type === "FOUR_WHEELER") {
+      if (
+        target.tyre_target_type === "FOUR_WHEELER"
+      ) {
         achievementSql += `
           AND vehicle_type = ?
         `;
 
-        achievementParams.push("FOUR_WHEELER");
+        achievementParams.push(
+          "FOUR_WHEELER"
+        );
       }
 
       const achievement = await getOne(
@@ -369,14 +518,20 @@ const TargetController = {
       const amountAchievementPercentage =
         amountTarget > 0
           ? Number(
-              ((achievedAmount / amountTarget) * 100).toFixed(2)
+              (
+                (achievedAmount / amountTarget) *
+                100
+              ).toFixed(2)
             )
           : 0;
 
       const tyreAchievementPercentage =
         tyreTarget > 0
           ? Number(
-              ((achievedTyres / tyreTarget) * 100).toFixed(2)
+              (
+                (achievedTyres / tyreTarget) *
+                100
+              ).toFixed(2)
             )
           : 0;
 
@@ -402,10 +557,16 @@ const TargetController = {
             month,
           },
 
+          shop: {
+            id: target.shop_id,
+            name: target.shop_name,
+          },
+
           target: {
             amount: amountTarget,
             tyres: tyreTarget,
-            tyreTargetType: target.tyre_target_type,
+            tyreTargetType:
+              target.tyre_target_type,
           },
 
           achieved: {
@@ -424,8 +585,10 @@ const TargetController = {
           },
 
           achievementPercentage: {
-            amount: amountAchievementPercentage,
-            tyres: tyreAchievementPercentage,
+            amount:
+              amountAchievementPercentage,
+            tyres:
+              tyreAchievementPercentage,
           },
 
           status: {
@@ -448,7 +611,10 @@ const TargetController = {
       const { id } = req.params;
 
       if (!organizationId) {
-        throw new AppError("organizationId is required", 400);
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
       }
 
       const existingTarget = await getOne(
@@ -458,11 +624,17 @@ const TargetController = {
         WHERE id = ?
           AND organization_id = ?
         `,
-        [id, organizationId]
+        [
+          id,
+          organizationId,
+        ]
       );
 
       if (!existingTarget) {
-        throw new AppError("Target not found", 404);
+        throw new AppError(
+          "Target not found",
+          404
+        );
       }
 
       const {
@@ -474,12 +646,16 @@ const TargetController = {
       const amount =
         amountTarget !== undefined
           ? Number(amountTarget)
-          : Number(existingTarget.amount_target);
+          : Number(
+              existingTarget.amount_target
+            );
 
       const tyre =
         tyreTarget !== undefined
           ? Number(tyreTarget)
-          : Number(existingTarget.tyre_target);
+          : Number(
+              existingTarget.tyre_target
+            );
 
       const targetType =
         tyreTargetType !== undefined
@@ -529,9 +705,13 @@ const TargetController = {
 
       const updatedTarget = await getOne(
         `
-        SELECT *
-        FROM monthly_targets
-        WHERE id = ?
+        SELECT
+          mt.*,
+          s.name AS shop_name
+        FROM monthly_targets mt
+        LEFT JOIN shops s
+          ON s.id = mt.shop_id
+        WHERE mt.id = ?
         `,
         [id]
       );
@@ -554,17 +734,56 @@ const TargetController = {
       const organizationId = getOrgScope(req);
 
       if (!organizationId) {
-        throw new AppError("organizationId is required", 400);
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
       }
 
+      const {
+        shopId,
+      } = req.query;
+
+      let sql = `
+        SELECT
+          mt.*,
+          s.name AS shop_name
+        FROM monthly_targets mt
+        LEFT JOIN shops s
+          ON s.id = mt.shop_id
+        WHERE mt.organization_id = ?
+      `;
+
+      const params = [
+        organizationId,
+      ];
+
+      // --------------------------------------------------------
+      // Optional shop filter
+      // --------------------------------------------------------
+
+      if (shopId) {
+        await verifyShopOrganization(
+          shopId,
+          organizationId
+        );
+
+        sql += `
+          AND mt.shop_id = ?
+        `;
+
+        params.push(shopId);
+      }
+
+      sql += `
+        ORDER BY
+          mt.target_year DESC,
+          mt.target_month DESC
+      `;
+
       const targets = await query(
-        `
-        SELECT *
-        FROM monthly_targets
-        WHERE organization_id = ?
-        ORDER BY target_year DESC, target_month DESC
-        `,
-        [organizationId]
+        sql,
+        params
       );
 
       return res.json({

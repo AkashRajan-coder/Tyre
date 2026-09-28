@@ -507,10 +507,10 @@ class EmployeeController {
         leadSource &&
         !validLeadSources.includes(leadSource)
       ) {
-        throw new AppError(
-          "Invalid leadSource. Must be MOBILE, INSTAGRAM, or OFFLINE",
-          400
-        );
+       throw new AppError(
+  "Invalid leadSource. Must be DIRECT_WALK_IN, REFERRAL, or TELEPHONE",
+  400
+);
       }
 
       // --------------------------------------------------------
