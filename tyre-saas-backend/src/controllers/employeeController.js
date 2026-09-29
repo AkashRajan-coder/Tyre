@@ -1333,7 +1333,6 @@ static async updateEnquiry(req, res, next) {
 
     const {
       status,
-
       followUpDate,
       remarks,
 
@@ -1363,6 +1362,12 @@ static async updateEnquiry(req, res, next) {
       suitableShopId,
 
       notFitLocation,
+
+      // NEW - outside/local shop details
+      outsideShopName,
+      outsideShopLocation,
+      outsideShopAddress,
+      outsideShopAmount,
     } = req.body;
 
     // --------------------------------------------------------
@@ -1705,6 +1710,26 @@ static async updateEnquiry(req, res, next) {
             not_fit_location
           ),
 
+          outside_shop_name = COALESCE(
+            ?,
+            outside_shop_name
+          ),
+
+          outside_shop_location = COALESCE(
+            ?,
+            outside_shop_location
+          ),
+
+          outside_shop_address = COALESCE(
+            ?,
+            outside_shop_address
+          ),
+
+          outside_shop_amount = COALESCE(
+            ?,
+            outside_shop_amount
+          ),
+
           last_modified_at = ?,
           last_modified_by = ?
 
@@ -1750,6 +1775,12 @@ static async updateEnquiry(req, res, next) {
         suitableShopId || null,
 
         notFitLocation || null,
+
+        // NEW - outside/local shop details
+        outsideShopName || null,
+        outsideShopLocation || null,
+        outsideShopAddress || null,
+        outsideShopAmount || null,
 
         now,
         req.user.id,
