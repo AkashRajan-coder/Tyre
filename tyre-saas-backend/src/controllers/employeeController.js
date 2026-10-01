@@ -91,7 +91,14 @@ async function resolveTyreBrand(orgId, tyreBrandId, tyreBrandText) {
     return { id: match ? match.id : null, text: cleanText };
   }
 
-  throw new AppError("tyreBrand or tyreBrandId is required", 400);
+  const other = await getOne(
+    `SELECT id, name FROM tyre_brands WHERE organization_id = ? AND LOWER(name) = 'other' AND is_active = 1`,
+    [orgId]
+  );
+  if (other) {
+    return { id: other.id, text: other.name };
+  }
+  return { id: null, text: null };
 }
 
 class EmployeeController {
