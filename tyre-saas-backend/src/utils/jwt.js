@@ -1,10 +1,24 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
-const JWT_SECRET = process.env.JWT_SECRET || "tyre_shop_super_secret_jwt_key_2026";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  "tyre_shop_super_secret_jwt_key_2026";
+
+const JWT_EXPIRES_IN =
+  process.env.JWT_EXPIRES_IN || "7d";
 
 function generateToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(
+    {
+      ...payload,
+      jti: crypto.randomUUID(),
+    },
+    JWT_SECRET,
+    {
+      expiresIn: JWT_EXPIRES_IN,
+    }
+  );
 }
 
 function verifyToken(token) {

@@ -339,7 +339,6 @@ static async reassignEnquiry(req, res, next) {
       throw new AppError("assignedToUserId is required", 400);
     }
 
-    // 1. Find the enquiry
     let enquirySql = `
       SELECT *
       FROM customer_enquiries
@@ -366,7 +365,6 @@ static async reassignEnquiry(req, res, next) {
       );
     }
 
-    // 2. Check employee belongs to the enquiry's shop
     let targetSql = `
       SELECT
         u.id,
@@ -407,11 +405,9 @@ static async reassignEnquiry(req, res, next) {
       );
     }
 
-    // 3. Reassign enquiry
     const now = new Date().toISOString();
 
-    await execute(
-      `
+    let updateSql = `
       UPDATE customer_enquiries
       SET
         assigned_to_user_id = ?,
@@ -419,16 +415,22 @@ static async reassignEnquiry(req, res, next) {
         last_modified_by = ?
       WHERE id = ?
         AND is_deleted = 0
-      `,
-      [
-        assignedToUserId,
-        now,
-        req.user.id,
-        id,
-      ]
-    );
+    `;
 
-    // 4. Create enquiry log
+    const updateParams = [
+      assignedToUserId,
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
+    await execute(updateSql, updateParams);
+
     await execute(
       `
       INSERT INTO enquiry_logs (
@@ -466,99 +468,103 @@ static async reassignEnquiry(req, res, next) {
   // SOFT DELETE ENQUIRY
   // ============================================================
 
-  static async softDeleteEnquiry(req, res, next) {
-    try {
-      const orgId = getOrgScope(req);
-      const { id } = req.params;
+static async softDeleteEnquiry(req, res, next) {
+  try {
+    const orgId = getOrgScope(req);
+    const { id } = req.params;
 
-      let checkSql = `
-        SELECT id
-        FROM customer_enquiries
-        WHERE id = ?
-          AND is_deleted = 0
+    let checkSql = `
+      SELECT id
+      FROM customer_enquiries
+      WHERE id = ?
+        AND is_deleted = 0
+    `;
+
+    const checkParams = [id];
+
+    if (orgId) {
+      checkSql += `
+        AND organization_id = ?
       `;
 
-      const checkParams = [id];
-
-      if (orgId) {
-        checkSql += `
-          AND organization_id = ?
-        `;
-
-        checkParams.push(orgId);
-      }
-
-      const enquiry = await getOne(
-        checkSql,
-        checkParams
-      );
-
-      if (!enquiry) {
-        throw new AppError(
-          "Enquiry not found or access denied",
-          404
-        );
-      }
-
-      const now = new Date().toISOString();
-
-      await execute(
-        `
-          UPDATE customer_enquiries
-
-          SET
-            is_deleted = 1,
-            last_modified_at = ?,
-            last_modified_by = ?
-
-          WHERE id = ?
-        `,
-        [
-          now,
-          req.user.id,
-          id,
-        ]
-      );
-
-      await execute(
-        `
-          INSERT INTO enquiry_logs
-          (
-            id,
-            enquiry_id,
-            action,
-            remarks,
-            created_by_id,
-            created_at
-          )
-
-          VALUES
-          (
-            ?,
-            ?,
-            'SOFT_DELETED',
-            ?,
-            ?,
-            ?
-          )
-        `,
-        [
-          uuid(),
-          id,
-          "Enquiry soft deleted by Admin",
-          req.user.id,
-          now,
-        ]
-      );
-
-      res.json({
-        success: true,
-        message: "Enquiry deleted successfully",
-      });
-    } catch (error) {
-      next(error);
+      checkParams.push(orgId);
     }
+
+    const enquiry = await getOne(
+      checkSql,
+      checkParams
+    );
+
+    if (!enquiry) {
+      throw new AppError(
+        "Enquiry not found or access denied",
+        404
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    let updateSql = `
+      UPDATE customer_enquiries
+      SET
+        is_deleted = 1,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
+    await execute(updateSql, updateParams);
+
+    await execute(
+      `
+        INSERT INTO enquiry_logs
+        (
+          id,
+          enquiry_id,
+          action,
+          remarks,
+          created_by_id,
+          created_at
+        )
+        VALUES
+        (
+          ?,
+          ?,
+          'SOFT_DELETED',
+          ?,
+          ?,
+          ?
+        )
+      `,
+      [
+        uuid(),
+        id,
+        "Enquiry soft deleted by Admin",
+        req.user.id,
+        now,
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: "Enquiry deleted successfully",
+    });
+
+  } catch (error) {
+    next(error);
   }
+}
 
   // ============================================================
   // LIST SHOPS
@@ -769,34 +775,43 @@ static async updateShop(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE shops
+      SET
+        name = ?,
+        address = ?,
+        phone = ?,
+        gst_number = ?,
+        is_active = ?,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      name ?? shop.name,
+      address ?? shop.address,
+      phone ?? shop.phone,
+      gstNumber ?? shop.gst_number,
+
+      typeof isActive === "boolean"
+        ? (isActive ? 1 : 0)
+        : shop.is_active,
+
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE shops
-        SET
-          name = ?,
-          address = ?,
-          phone = ?,
-          gst_number = ?,
-          is_active = ?,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        name ?? shop.name,
-        address ?? shop.address,
-        phone ?? shop.phone,
-        gstNumber ?? shop.gst_number,
-
-        typeof isActive === "boolean"
-          ? (isActive ? 1 : 0)
-          : shop.is_active,
-
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     const updatedShop = await getOne(
@@ -831,18 +846,12 @@ static async deactivateShop(req, res, next) {
     const orgId = getOrgScope(req);
     const { id } = req.params;
 
-    // --------------------------------------------------------
-    // Find shop
-    // --------------------------------------------------------
-
     let checkSql = `
       SELECT
         id,
         is_active,
         is_deleted
-
       FROM shops
-
       WHERE id = ?
         AND is_deleted = FALSE
     `;
@@ -869,35 +878,39 @@ static async deactivateShop(req, res, next) {
       );
     }
 
-    // --------------------------------------------------------
-    // Deactivate shop
-    // --------------------------------------------------------
-
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE shops
+      SET
+        is_active = 0,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE shops
-
-        SET
-          is_active = 0,
-          last_modified_at = ?,
-          last_modified_by = ?
-
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "Shop deactivated successfully.",
     });
+
   } catch (error) {
     next(error);
   }
@@ -906,7 +919,7 @@ static async deactivateShop(req, res, next) {
   // SOFT DELETE SHOP
   // ============================================================
 
- static async softDeleteShop(req, res, next) {
+static async softDeleteShop(req, res, next) {
   try {
     const orgId = getOrgScope(req);
     const { id } = req.params;
@@ -942,21 +955,30 @@ static async deactivateShop(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE shops
+      SET
+        is_active = 0,
+        is_deleted = TRUE,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE shops
-        SET
-          is_active = 0,
-          is_deleted = TRUE,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
@@ -1313,10 +1335,6 @@ static async updateUser(req, res, next) {
       shopIds,
     } = req.body;
 
-    // --------------------------------------------------------
-    // Find user
-    // --------------------------------------------------------
-
     let checkSql = `
       SELECT *
       FROM users
@@ -1347,10 +1365,6 @@ static async updateUser(req, res, next) {
       );
     }
 
-    // --------------------------------------------------------
-    // Validate role
-    // --------------------------------------------------------
-
     if (
       role !== undefined &&
       !["ADMIN", "EMPLOYEE"].includes(role)
@@ -1363,43 +1377,42 @@ static async updateUser(req, res, next) {
 
     const now = new Date().toISOString();
 
-    // --------------------------------------------------------
-    // Update user
-    // --------------------------------------------------------
+    let updateSql = `
+      UPDATE users
+      SET
+        phone = ?,
+        full_name = ?,
+        role = ?,
+        is_active = ?,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      phone ?? user.phone,
+      fullName ?? user.full_name,
+      role ?? user.role,
+
+      typeof isActive === "boolean"
+        ? (isActive ? 1 : 0)
+        : user.is_active,
+
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
 
     await execute(
-      `
-        UPDATE users
-        SET
-          phone = ?,
-          full_name = ?,
-          role = ?,
-          is_active = ?,
-          last_modified_at = ?,
-          last_modified_by = ?
-
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        phone ?? user.phone,
-        fullName ?? user.full_name,
-        role ?? user.role,
-
-        typeof isActive === "boolean"
-          ? (isActive ? 1 : 0)
-          : user.is_active,
-
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
-
-    // --------------------------------------------------------
-    // Update shop assignments
-    // Only when shopIds is provided
-    // --------------------------------------------------------
 
     if (Array.isArray(shopIds)) {
       await execute(
@@ -1453,10 +1466,6 @@ static async updateUser(req, res, next) {
       }
     }
 
-    // --------------------------------------------------------
-    // Get updated user
-    // --------------------------------------------------------
-
     const updatedUser = await getOne(
       `
         SELECT
@@ -1469,9 +1478,7 @@ static async updateUser(req, res, next) {
           is_deleted,
           created_at,
           last_modified_at
-
         FROM users
-
         WHERE id = ?
       `,
       [id]
@@ -1482,6 +1489,7 @@ static async updateUser(req, res, next) {
       message: "User updated successfully",
       data: updatedUser,
     });
+
   } catch (error) {
     next(error);
   }
@@ -1507,7 +1515,6 @@ static async resetPassword(req, res, next) {
     let checkSql = `
       SELECT id
       FROM users
-
       WHERE id = ?
         AND role IN ('ADMIN', 'EMPLOYEE')
         AND is_deleted = FALSE
@@ -1540,30 +1547,38 @@ static async resetPassword(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE users
+      SET
+        password_hash = ?,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      hashedPassword,
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE users
-
-        SET
-          password_hash = ?,
-          last_modified_at = ?,
-          last_modified_by = ?
-
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        hashedPassword,
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "Password reset successfully",
     });
+
   } catch (error) {
     next(error);
   }
@@ -1573,7 +1588,7 @@ static async resetPassword(req, res, next) {
   // SOFT DELETE USER / EMPLOYEE
   // ============================================================
 
- static async softDeleteUser(req, res, next) {
+static async softDeleteUser(req, res, next) {
   try {
     const orgId = getOrgScope(req);
     const { id } = req.params;
@@ -1584,9 +1599,7 @@ static async resetPassword(req, res, next) {
         role,
         is_active,
         is_deleted
-
       FROM users
-
       WHERE id = ?
         AND role IN ('ADMIN', 'EMPLOYEE')
         AND is_deleted = FALSE
@@ -1616,29 +1629,37 @@ static async resetPassword(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE users
+      SET
+        is_active = 0,
+        is_deleted = TRUE,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE users
-
-        SET
-          is_active = 0,
-          is_deleted = TRUE,
-          last_modified_at = ?,
-          last_modified_by = ?
-
-        WHERE id = ?
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "User soft-deleted successfully",
     });
+
   } catch (error) {
     next(error);
   }
@@ -1653,10 +1674,6 @@ static async deactivateUser(req, res, next) {
   try {
     const orgId = getOrgScope(req);
     const { id } = req.params;
-
-    // --------------------------------------------------------
-    // Find user
-    // --------------------------------------------------------
 
     let checkSql = `
       SELECT
@@ -1690,27 +1707,32 @@ static async deactivateUser(req, res, next) {
       );
     }
 
-    // --------------------------------------------------------
-    // Deactivate user
-    // --------------------------------------------------------
-
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE users
+      SET
+        is_active = 0,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE users
-        SET
-          is_active = 0,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
@@ -1718,6 +1740,7 @@ static async deactivateUser(req, res, next) {
       message:
         "User deactivated successfully. Login is now blocked.",
     });
+
   } catch (error) {
     next(error);
   }
@@ -1838,10 +1861,14 @@ static async activateShop(req, res, next) {
       checkSql += `
         AND organization_id = ?
       `;
+
       checkParams.push(orgId);
     }
 
-    const shop = await getOne(checkSql, checkParams);
+    const shop = await getOne(
+      checkSql,
+      checkParams
+    );
 
     if (!shop) {
       throw new AppError(
@@ -1852,27 +1879,37 @@ static async activateShop(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE shops
+      SET
+        is_active = 1,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE shops
-        SET
-          is_active = 1,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "Shop activated successfully.",
     });
+
   } catch (error) {
     next(error);
   }
@@ -1901,6 +1938,7 @@ static async activateUser(req, res, next) {
       checkSql += `
         AND organization_id = ?
       `;
+
       checkParams.push(orgId);
     }
 
@@ -1918,27 +1956,37 @@ static async activateUser(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE users
+      SET
+        is_active = 1,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+        AND is_deleted = FALSE
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE users
-        SET
-          is_active = 1,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-          AND is_deleted = FALSE
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "User activated successfully.",
     });
+
   } catch (error) {
     next(error);
   }
@@ -2226,7 +2274,6 @@ static async updateTyreSize(req, res, next) {
 
     const normalizedSize = size.trim();
 
-    // Find existing size
     let checkSql = `
       SELECT *
       FROM tyre_sizes
@@ -2255,7 +2302,6 @@ static async updateTyreSize(req, res, next) {
       );
     }
 
-    // Check duplicate
     const duplicateSize = await getOne(
       `
         SELECT id
@@ -2282,21 +2328,30 @@ static async updateTyreSize(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE tyre_sizes
+      SET
+        size = ?,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      normalizedSize,
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE tyre_sizes
-        SET
-          size = ?,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-      `,
-      [
-        normalizedSize,
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     const updatedTyreSize = await getOne(
@@ -2313,6 +2368,7 @@ static async updateTyreSize(req, res, next) {
       message: "Tyre size updated successfully",
       data: updatedTyreSize,
     });
+
   } catch (error) {
     next(error);
   }
@@ -2356,26 +2412,36 @@ static async deactivateTyreSize(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE tyre_sizes
+      SET
+        is_active = 0,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE tyre_sizes
-        SET
-          is_active = 0,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "Tyre size deactivated successfully",
     });
+
   } catch (error) {
     next(error);
   }
@@ -2419,26 +2485,36 @@ static async activateTyreSize(req, res, next) {
 
     const now = new Date().toISOString();
 
+    let updateSql = `
+      UPDATE tyre_sizes
+      SET
+        is_active = 1,
+        last_modified_at = ?,
+        last_modified_by = ?
+      WHERE id = ?
+    `;
+
+    const updateParams = [
+      now,
+      req.user.id,
+      id,
+    ];
+
+    if (orgId) {
+      updateSql += ` AND organization_id = ?`;
+      updateParams.push(orgId);
+    }
+
     await execute(
-      `
-        UPDATE tyre_sizes
-        SET
-          is_active = 1,
-          last_modified_at = ?,
-          last_modified_by = ?
-        WHERE id = ?
-      `,
-      [
-        now,
-        req.user.id,
-        id,
-      ]
+      updateSql,
+      updateParams
     );
 
     res.json({
       success: true,
       message: "Tyre size activated successfully",
     });
+
   } catch (error) {
     next(error);
   }

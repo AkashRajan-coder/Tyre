@@ -6,6 +6,7 @@ const { apiLimiter } = require("./src/middlewares/rateLimiter");
 const swaggerUi = require("swagger-ui-express");
 const swaggerDocument = require("./src/config/swagger");
 const { initDatabase } = require("./src/config/db");
+const dailyReportRoutes = require("./src/routes/DailyReportRoutes");
 const apiRoutes = require("./src/routes");
 const { notFoundHandler, errorHandler } = require("./src/middlewares/error");
 
@@ -16,10 +17,12 @@ app.use(helmet({ contentSecurityPolicy: false })); // Security headers
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use("/api/v1/daily-reports", dailyReportRoutes);
 
 // Swagger UI interactive API documentation
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/docs", (req, res) => res.redirect("/api/docs"));
+
 
 // Root welcome route
 app.get("/", (req, res) => {

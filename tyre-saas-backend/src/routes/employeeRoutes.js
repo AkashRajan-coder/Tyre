@@ -29,6 +29,11 @@ router.get("/completed", EmployeeController.getCompleted);
 
 // 7. Tab 4: Customer Search
 router.get("/search", EmployeeController.search);
+router.get(
+  "/enquiries/no-response",
+  EmployeeController.getNoResponse
+);
+
 
 // 8. Follow-up Detail
 router.get("/enquiries/:id", EmployeeController.getById);
@@ -65,6 +70,7 @@ router.get("/car-brands", EmployeeController.getCarBrands);
 router.get("/car-models", EmployeeController.getCarModels);
 
 router.get("/target-dashboard", TargetController.getTargetDashboard);
+
 
 
 

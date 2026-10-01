@@ -4,6 +4,7 @@ const { getOne } = require("../config/db");
 async function requireAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
@@ -12,10 +13,48 @@ async function requireAuth(req, res, next) {
     }
 
     const token = authHeader.split(" ")[1];
+
     const decoded = verifyToken(token);
 
+    // JWT must contain a unique token ID
+    if (!decoded.jti) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token",
+      });
+    }
+
+    // Check whether this token was revoked during logout
+    const revokedToken = await getOne(
+      `
+        SELECT jti
+        FROM revoked_tokens
+        WHERE jti = ?
+          AND expires_at > ?
+      `,
+      [decoded.jti, new Date().toISOString()]
+    );
+
+    if (revokedToken) {
+      return res.status(401).json({
+        success: false,
+        message: "Token has been revoked. Please login again.",
+      });
+    }
+
+    // Check user
     const user = await getOne(
-      "SELECT id, phone, full_name, role, organization_id, is_active FROM users WHERE id = ?",
+      `
+        SELECT
+          id,
+          phone,
+          full_name,
+          role,
+          organization_id,
+          is_active
+        FROM users
+        WHERE id = ?
+      `,
       [decoded.userId]
     );
 
@@ -26,19 +65,31 @@ async function requireAuth(req, res, next) {
       });
     }
 
+    // Check user account status
     if (!user.is_active) {
       return res.status(403).json({
         success: false,
-        message: "Account has been deactivated. Please contact your administrator.",
+        message:
+          "Account has been deactivated. Please contact your administrator.",
       });
     }
 
+    // Check organization status
     if (user.organization_id) {
-      const org = await getOne("SELECT is_active FROM organizations WHERE id = ?", [user.organization_id]);
+      const org = await getOne(
+        `
+          SELECT is_active
+          FROM organizations
+          WHERE id = ?
+        `,
+        [user.organization_id]
+      );
+
       if (org && !org.is_active) {
         return res.status(403).json({
           success: false,
-          message: "Organization account has been deactivated. Access blocked.",
+          message:
+            "Organization account has been deactivated. Access blocked.",
         });
       }
     }
@@ -60,36 +111,51 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Restricted to Platform Super Admin (SaaS Owner)
+// Restricted to Platform Super Admin
 function requireSuperAdmin(req, res, next) {
   if (!req.user || req.user.role !== "SUPER_ADMIN") {
     return res.status(403).json({
       success: false,
-      message: "Access restricted to platform Super Administrators only",
+      message:
+        "Access restricted to platform Super Administrators only",
     });
   }
+
   next();
 }
 
 // Business Admin or Super Admin
 function requireAdmin(req, res, next) {
-  if (!req.user || (req.user.role !== "ADMIN" && req.user.role !== "SUPER_ADMIN")) {
+  if (
+    !req.user ||
+    (req.user.role !== "ADMIN" &&
+      req.user.role !== "SUPER_ADMIN")
+  ) {
     return res.status(403).json({
       success: false,
-      message: "Access restricted to administrators only",
+      message:
+        "Access restricted to administrators only",
     });
   }
+
   next();
 }
 
 // Employee, Admin, or Super Admin
 function requireEmployee(req, res, next) {
-  if (!req.user || !["EMPLOYEE", "ADMIN", "SUPER_ADMIN"].includes(req.user.role)) {
+  if (
+    !req.user ||
+    !["EMPLOYEE", "ADMIN", "SUPER_ADMIN"].includes(
+      req.user.role
+    )
+  ) {
     return res.status(403).json({
       success: false,
-      message: "Access restricted to authorized staff",
+      message:
+        "Access restricted to authorized staff",
     });
   }
+
   next();
 }
 

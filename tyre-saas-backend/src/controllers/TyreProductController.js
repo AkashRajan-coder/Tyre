@@ -30,7 +30,7 @@ class TyreProductController {
         tyreSizeId,
         tyreBrandId,
         vehicleType,
-        price,
+     
       } = req.body;
 
       // --------------------------------------------------------
@@ -69,28 +69,9 @@ class TyreProductController {
         );
       }
 
-      if (
-        price === undefined ||
-        price === null ||
-        price === ""
-      ) {
-        throw new AppError(
-          "Price is required",
-          400
-        );
-      }
+   
 
-      const numericPrice = Number(price);
-
-      if (
-        Number.isNaN(numericPrice) ||
-        numericPrice < 0
-      ) {
-        throw new AppError(
-          "Price must be a valid number greater than or equal to 0",
-          400
-        );
-      }
+     
 
       // --------------------------------------------------------
       // CHECK TYRE SIZE
@@ -191,7 +172,7 @@ class TyreProductController {
             tyre_size_id,
             tyre_brand_id,
             vehicle_type,
-            price,
+        
             is_active,
             created_at,
             created_by,
@@ -200,7 +181,6 @@ class TyreProductController {
           )
           VALUES
           (
-            ?,
             ?,
             ?,
             ?,
@@ -219,7 +199,7 @@ class TyreProductController {
           tyreSizeId,
           tyreBrandId,
           vehicleType,
-          numericPrice,
+        
           now,
           req.user.id,
           now,
@@ -322,7 +302,7 @@ class TyreProductController {
         tyreSizeId,
         tyreBrandId,
         vehicleType,
-        price,
+   
       } = req.body;
 
       // --------------------------------------------------------
@@ -361,28 +341,7 @@ class TyreProductController {
         );
       }
 
-      if (
-        price === undefined ||
-        price === null ||
-        price === ""
-      ) {
-        throw new AppError(
-          "Price is required",
-          400
-        );
-      }
-
-      const numericPrice = Number(price);
-
-      if (
-        Number.isNaN(numericPrice) ||
-        numericPrice < 0
-      ) {
-        throw new AppError(
-          "Price must be a valid number greater than or equal to 0",
-          400
-        );
-      }
+      
 
       // --------------------------------------------------------
       // FIND EXISTING PRODUCT
@@ -512,7 +471,7 @@ class TyreProductController {
             tyre_size_id = ?,
             tyre_brand_id = ?,
             vehicle_type = ?,
-            price = ?,
+          
             last_modified_at = ?,
             last_modified_by = ?
           WHERE id = ?
@@ -521,7 +480,7 @@ class TyreProductController {
           tyreSizeId,
           tyreBrandId,
           vehicleType,
-          numericPrice,
+       
           now,
           req.user.id,
           id,
@@ -720,7 +679,7 @@ static async listAvailableTyreProducts(req, res, next) {
         tp.tyre_size_id,
         tp.tyre_brand_id,
         tp.vehicle_type,
-        tp.price,
+     
         tp.is_active,
 
         ts.size AS tyre_size,

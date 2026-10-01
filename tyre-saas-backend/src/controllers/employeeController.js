@@ -420,9 +420,7 @@ class EmployeeController {
   // ============================================================
   // 4. CREATE CUSTOMER ENQUIRY
   // ============================================================
-// ============================================================
-// 4. CREATE CUSTOMER ENQUIRY
-// ============================================================
+
 
 static async createEnquiry(req, res, next) {
   try {
@@ -440,11 +438,10 @@ static async createEnquiry(req, res, next) {
 
       vehicleType,
 
-      tyreSize,
-      tyreBrand,
+      tyreSizeId,
+      tyreBrandId,
 
-      quantity = 4,
-      estimatedBudget,
+      amount,
 
       followUpDate,
       remarks,
@@ -474,6 +471,99 @@ static async createEnquiry(req, res, next) {
     ) {
       throw new AppError(
         "shopId, customerName, customerPhone, and followUpDate are required",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Amount validation
+    // --------------------------------------------------------
+
+    if (
+      amount === undefined ||
+      amount === null ||
+      amount === ""
+    ) {
+      throw new AppError(
+        "amount is required",
+        400
+      );
+    }
+
+    if (
+      Number.isNaN(Number(amount)) ||
+      Number(amount) < 0
+    ) {
+      throw new AppError(
+        "amount must be a valid positive number",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Tyre Size validation
+    // --------------------------------------------------------
+
+    if (!tyreSizeId) {
+      throw new AppError(
+        "tyreSizeId is required",
+        400
+      );
+    }
+
+    const tyreSize = await getOne(
+      `
+        SELECT
+          id,
+          size
+        FROM tyre_sizes
+        WHERE id = ?
+          AND organization_id = ?
+          AND is_active = 1
+      `,
+      [
+        tyreSizeId,
+        req.user.organizationId,
+      ]
+    );
+
+    if (!tyreSize) {
+      throw new AppError(
+        "Invalid tyre size",
+        400
+      );
+    }
+
+    // --------------------------------------------------------
+    // Tyre Brand validation
+    // --------------------------------------------------------
+
+    if (!tyreBrandId) {
+      throw new AppError(
+        "tyreBrandId is required",
+        400
+      );
+    }
+
+    const tyreBrand = await getOne(
+      `
+        SELECT
+          id,
+          name
+        FROM tyre_brands
+        WHERE id = ?
+          AND organization_id = ?
+          AND is_active = 1
+      `,
+      [
+        tyreBrandId,
+        req.user.organizationId,
+      ]
+    );
+
+    if (!tyreBrand) {
+      throw new AppError(
+        "Invalid tyre brand",
         400
       );
     }
@@ -612,8 +702,6 @@ static async createEnquiry(req, res, next) {
         );
       }
 
-      // Store the master car model name
-      // in the existing vehicle_model column.
       selectedVehicleModel = carModel.name;
     }
 
@@ -664,11 +752,10 @@ static async createEnquiry(req, res, next) {
 
           vehicle_type,
 
-          tyre_size,
-          tyre_brand,
+          tyre_size_id,
+          tyre_brand_id,
 
-          quantity,
-          estimated_budget,
+          amount,
 
           follow_up_date,
           status,
@@ -713,7 +800,6 @@ static async createEnquiry(req, res, next) {
           ?,
 
           ?,
-          ?,
 
           ?,
           'PENDING',
@@ -754,11 +840,10 @@ static async createEnquiry(req, res, next) {
 
         vehicleType || null,
 
-        tyreSize || null,
-        tyreBrand || null,
+        tyreSizeId,
+        tyreBrandId,
 
-        quantity,
-        estimatedBudget || null,
+        Number(amount),
 
         followUpIso,
         remarks || null,
@@ -824,9 +909,16 @@ static async createEnquiry(req, res, next) {
 
     const created = await getOne(
       `
-        SELECT *
-        FROM customer_enquiries
-        WHERE id = ?
+        SELECT
+          ce.*,
+          ts.size AS tyre_size_name,
+          tb.name AS tyre_brand_name
+        FROM customer_enquiries ce
+        LEFT JOIN tyre_sizes ts
+          ON ts.id = ce.tyre_size_id
+        LEFT JOIN tyre_brands tb
+          ON tb.id = ce.tyre_brand_id
+        WHERE ce.id = ?
       `,
       [id]
     );
@@ -845,6 +937,12 @@ static async createEnquiry(req, res, next) {
     next(error);
   }
 }
+
+
+
+
+
+
 
   // ============================================================
   // 5. PENDING
@@ -1224,25 +1322,23 @@ static async createEnquiry(req, res, next) {
       const { shopId } = req.query;
 
       const enquiry = await getOne(
-        `
-          SELECT
-            ce.*,
-            s.name AS shop_name,
-            s.code AS shop_code,
-            u.full_name AS assigned_employee_name,
-            c.full_name AS creator_name
-          FROM customer_enquiries ce
-          JOIN shops s
-            ON s.id = ce.shop_id
-          LEFT JOIN users u
-            ON u.id = ce.assigned_to_user_id
-          LEFT JOIN users c
-            ON c.id = ce.created_by
-          WHERE ce.id = ?
-        `,
-        [id]
-      );
-
+  `
+    SELECT
+      ce.*,
+      s.name AS shop_name,
+      u.full_name AS assigned_employee_name,
+      c.full_name AS creator_name
+    FROM customer_enquiries ce
+    JOIN shops s
+      ON s.id = ce.shop_id
+    LEFT JOIN users u
+      ON u.id = ce.assigned_to_user_id
+    LEFT JOIN users c
+      ON c.id = ce.created_by
+    WHERE ce.id = ?
+  `,
+  [id]
+);
       if (!enquiry || enquiry.is_deleted) {
         throw new AppError(
           "Follow-up enquiry not found",
@@ -1420,12 +1516,14 @@ static async updateEnquiry(req, res, next) {
     // Status validation
     // --------------------------------------------------------
 
-    const validStatuses = [
-      "PENDING",
-      "COMPLETED",
-      "CANCELLED",
-      "LOST",
-    ];
+  
+ const validStatuses = [
+  "PENDING",
+  "COMPLETED",
+  "CANCELLED",
+  "LOST",
+  "NO_RESPONSE",
+];
 
     if (
       status &&
@@ -1881,6 +1979,78 @@ static async getCarModels(req, res, next) {
       success: true,
       data: models,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+static async getNoResponse(req, res, next) {
+  try {
+    const {
+      shopId,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    if (!shopId) {
+      throw new AppError(
+        "shopId query parameter is required",
+        400
+      );
+    }
+
+    await verifyShopAccess(
+      req.user.id,
+      req.user.role,
+      req.user.organizationId,
+      shopId
+    );
+
+    const p = parseInt(page, 10) || 1;
+    const l = parseInt(limit, 10) || 20;
+    const offset = (p - 1) * l;
+
+    const items = await query(
+      `
+        SELECT
+          ce.*,
+          u.full_name AS assigned_employee_name
+        FROM customer_enquiries ce
+        LEFT JOIN users u
+          ON u.id = ce.assigned_to_user_id
+        WHERE ce.shop_id = ?
+          AND ce.status = 'NO_RESPONSE'
+          AND ce.is_deleted = 0
+        ORDER BY ce.last_modified_at DESC
+        LIMIT ?
+        OFFSET ?
+      `,
+      [shopId, l, offset]
+    );
+
+    const totalRow = await getOne(
+      `
+        SELECT COUNT(*) AS c
+        FROM customer_enquiries
+        WHERE shop_id = ?
+          AND status = 'NO_RESPONSE'
+          AND is_deleted = 0
+      `,
+      [shopId]
+    );
+
+    const total = parseInt(totalRow?.c || 0, 10);
+
+    res.json({
+      success: true,
+      data: items,
+      pagination: {
+        total,
+        page: p,
+        limit: l,
+        totalPages: Math.ceil(total / l),
+      },
+    });
+
   } catch (error) {
     next(error);
   }

@@ -5,6 +5,7 @@ const TargetController = require("../controllers/TargetController");
 const CarBrandController = require("../controllers/carBrandController");
 const CarModelController = require("../controllers/CarModelController");
 const TyreProductController = require("../controllers/TyreProductController");
+const DailyReportController = require("../controllers/DailyReportController");
 
 const {
   requireAuth,
@@ -276,5 +277,10 @@ router.patch(
 router.patch(
   "/car-models/:id/activate",
   CarModelController.activateCarModel
+);
+
+router.get(
+  "/daily-reports",
+  DailyReportController.getDailyReports
 );
 module.exports = router;
