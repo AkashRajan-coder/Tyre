@@ -1593,9 +1593,15 @@ static async updateEnquiry(req, res, next) {
     // --------------------------------------------------------
 
   
+    if (typeof status === 'string') {
+      const upper = status.trim().toUpperCase();
+      if (upper === 'WON') status = 'COMPLETED';
+    }
+
  const validStatuses = [
   "PENDING",
   "COMPLETED",
+  "WON",
   "CANCELLED",
   "LOST",
   "NO_RESPONSE",
