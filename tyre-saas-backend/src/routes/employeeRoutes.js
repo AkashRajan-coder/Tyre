@@ -44,6 +44,8 @@ router.get(
   "/tyre-products",
   TyreProductController.listAvailableTyreProducts
 );
+router.get("/tyre-sizes", EmployeeController.getTyreSizes);
+router.get("/tyre-brands", EmployeeController.getTyreBrands);
 
 // Enquiry Tyre Options
 router.get(

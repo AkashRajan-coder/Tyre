@@ -3,8 +3,6 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { hashPassword } = require("../utils/password");
 
-const DB_TYPE = process.env.DB_TYPE || "sqlite";
-
 let dbInstance = null;
 let pgPool = null;
 
@@ -13,8 +11,16 @@ function uuid() {
 }
 
 async function initDatabase(forceType = null) {
-  const activeDbType = forceType || process.env.DB_TYPE || "sqlite";
-  
+  const activeDbType = forceType || process.env.DB_TYPE || (process.env.DATABASE_URL ? "postgres" : "sqlite");
+
+  // Production safety check: enforce Neon PostgreSQL in production
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.startsWith("postgres")) {
+      console.error("FATAL: DATABASE_URL is required in production environment (Neon PostgreSQL). SQLite fallback is disabled.");
+      process.exit(1);
+    }
+  }
+
   if (activeDbType === "postgres" || (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith("postgres"))) {
     const { Pool } = require("pg");
     pgPool = new Pool({
@@ -28,6 +34,7 @@ async function initDatabase(forceType = null) {
     });
     console.log("Connected to PostgreSQL/Neon database");
     await createTablesPostgres();
+    await runPostgresMigrations();
   } else if (activeDbType === "pg-mem") {
     const { newDb } = require("pg-mem");
     const memDb = newDb();
@@ -35,28 +42,36 @@ async function initDatabase(forceType = null) {
     pgPool = new adapter.Pool();
     console.log("Connected to in-memory PostgreSQL engine (Strict PG mode)");
     await createTablesPostgres();
+    await runPostgresMigrations();
   } else {
     // Default SQLite for zero-setup local dev & tests
     const sqlite3 = require("sqlite3").verbose();
     const dbPath = path.resolve(__dirname, "../../tyre_saas.db");
-    
-    dbInstance = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error("Error opening SQLite database:", err);
-      } else {
-        console.log(`Connected to SQLite database at ${dbPath}`);
-        dbInstance.run("PRAGMA foreign_keys = ON;");
-      }
+
+    await new Promise((resolve, reject) => {
+      dbInstance = new sqlite3.Database(dbPath, (err) => {
+        if (err) {
+          console.error("Error opening SQLite database:", err);
+          reject(err);
+        } else {
+          console.log(`Connected to SQLite database at ${dbPath}`);
+          dbInstance.run("PRAGMA foreign_keys = ON;", (pragmaErr) => {
+            if (pragmaErr) reject(pragmaErr);
+            else resolve();
+          });
+        }
+      });
     });
 
     await createTablesSqlite();
+    await runSqliteMigrations();
   }
 
   await seedDatabaseIfEmpty();
 }
 
 // -------------------------------------------------------------------
-// Table Creation (Multi-Tenant SaaS Schema)
+// SQLite Table Creation
 // -------------------------------------------------------------------
 
 async function createTablesSqlite() {
@@ -81,8 +96,9 @@ async function createTablesSqlite() {
       phone TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       full_name TEXT NOT NULL,
-      role TEXT DEFAULT 'EMPLOYEE', -- 'SUPER_ADMIN' | 'ADMIN' | 'EMPLOYEE'
+      role TEXT DEFAULT 'EMPLOYEE',
       is_active INTEGER DEFAULT 1,
+      is_deleted INTEGER DEFAULT 0,
       created_at TEXT NOT NULL,
       created_by TEXT,
       last_modified_at TEXT NOT NULL,
@@ -98,6 +114,7 @@ async function createTablesSqlite() {
       address TEXT,
       phone TEXT,
       is_active INTEGER DEFAULT 1,
+      is_deleted INTEGER DEFAULT 0,
       created_at TEXT NOT NULL,
       created_by TEXT,
       last_modified_at TEXT NOT NULL,
@@ -128,11 +145,27 @@ async function createTablesSqlite() {
       tyre_brand TEXT,
       quantity INTEGER DEFAULT 4,
       estimated_budget REAL,
+      amount REAL,
       follow_up_date TEXT NOT NULL,
       status TEXT DEFAULT 'PENDING',
       remarks TEXT,
       assigned_to_user_id TEXT,
       is_deleted INTEGER DEFAULT 0,
+      car_brand_id TEXT,
+      car_model_id TEXT,
+      vehicle_type TEXT,
+      tyre_size_id TEXT,
+      tyre_brand_id TEXT,
+      fit_status TEXT,
+      lead_source TEXT,
+      enquiry_type TEXT,
+      wheel_alignment TEXT,
+      suitable_shop_id TEXT,
+      not_fit_location TEXT,
+      outside_shop_name TEXT,
+      outside_shop_location TEXT,
+      outside_shop_address TEXT,
+      outside_shop_amount REAL,
       created_at TEXT NOT NULL,
       created_by TEXT NOT NULL,
       last_modified_at TEXT NOT NULL,
@@ -155,12 +188,152 @@ async function createTablesSqlite() {
       FOREIGN KEY(created_by_id) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS tyre_sizes (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      size TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS tyre_brands (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS tyre_products (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      tyre_size_id TEXT NOT NULL,
+      tyre_brand_id TEXT NOT NULL,
+      vehicle_type TEXT NOT NULL,
+      product_name TEXT,
+      price REAL DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY(tyre_size_id) REFERENCES tyre_sizes(id) ON DELETE CASCADE,
+      FOREIGN KEY(tyre_brand_id) REFERENCES tyre_brands(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS car_brands (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS car_models (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      car_brand_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY(car_brand_id) REFERENCES car_brands(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      report_date TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      tyre_customer_quantity INTEGER DEFAULT 0,
+      tyre_mechanic_quantity INTEGER DEFAULT 0,
+      two_wheeler_enquiry_customer_quantity INTEGER DEFAULT 0,
+      two_wheeler_enquiry_mechanic_quantity INTEGER DEFAULT 0,
+      two_wheeler_alignment_customer_quantity INTEGER DEFAULT 0,
+      two_wheeler_alignment_mechanic_quantity INTEGER DEFAULT 0,
+      wheel_alignment_customer_quantity INTEGER DEFAULT 0,
+      wheel_alignment_mechanic_quantity INTEGER DEFAULT 0,
+      commercial_tyre_customer_quantity INTEGER DEFAULT 0,
+      commercial_tyre_mechanic_quantity INTEGER DEFAULT 0,
+      ro_water_customer_quantity INTEGER DEFAULT 0,
+      ro_water_mechanic_quantity INTEGER DEFAULT 0,
+      above_17_inch_customer_quantity INTEGER DEFAULT 0,
+      above_17_inch_mechanic_quantity INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY(shop_id) REFERENCES shops(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS monthly_targets (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      target_year INTEGER NOT NULL,
+      target_month INTEGER NOT NULL,
+      amount_target REAL DEFAULT 0,
+      tyre_target INTEGER DEFAULT 0,
+      two_wheeler_enquiry_target INTEGER DEFAULT 0,
+      two_wheeler_alignment_target INTEGER DEFAULT 0,
+      wheel_alignment_target INTEGER DEFAULT 0,
+      commercial_tyre_target INTEGER DEFAULT 0,
+      ro_water_target INTEGER DEFAULT 0,
+      above_17_inch_target INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      last_modified_at TEXT NOT NULL,
+      last_modified_by TEXT,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY(shop_id) REFERENCES shops(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS enquiry_tyre_options (
+      id TEXT PRIMARY KEY,
+      enquiry_id TEXT NOT NULL,
+      tyre_product_id TEXT NOT NULL,
+      option_order INTEGER NOT NULL,
+      price_snapshot REAL,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      FOREIGN KEY(enquiry_id) REFERENCES customer_enquiries(id) ON DELETE CASCADE,
+      FOREIGN KEY(tyre_product_id) REFERENCES tyre_products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      phone TEXT PRIMARY KEY,
+      failed_attempts INTEGER DEFAULT 0,
+      locked_until TEXT,
+      last_attempt_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      jti TEXT PRIMARY KEY,
+      expires_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id);
     CREATE INDEX IF NOT EXISTS idx_shops_org ON shops(organization_id);
     CREATE INDEX IF NOT EXISTS idx_enquiries_org ON customer_enquiries(organization_id);
-    CREATE INDEX IF NOT EXISTS idx_enquiries_shop_phone ON customer_enquiries(shop_id, customer_phone);
-    CREATE INDEX IF NOT EXISTS idx_enquiries_shop_status_date ON customer_enquiries(shop_id, status, follow_up_date);
-    CREATE INDEX IF NOT EXISTS idx_logs_enquiry ON enquiry_logs(enquiry_id);
     CREATE INDEX IF NOT EXISTS idx_enquiries_shop_phone ON customer_enquiries(shop_id, customer_phone);
     CREATE INDEX IF NOT EXISTS idx_enquiries_shop_status_date ON customer_enquiries(shop_id, status, follow_up_date);
     CREATE INDEX IF NOT EXISTS idx_logs_enquiry ON enquiry_logs(enquiry_id);
@@ -173,6 +346,67 @@ async function createTablesSqlite() {
     });
   });
 }
+
+// -------------------------------------------------------------------
+// SQLite Guarded Migrations (for pre-existing tables)
+// -------------------------------------------------------------------
+
+async function runSqliteMigrations() {
+  const tableColumns = {
+    users: [
+      { name: "is_deleted", type: "INTEGER DEFAULT 0" }
+    ],
+    shops: [
+      { name: "is_deleted", type: "INTEGER DEFAULT 0" }
+    ],
+    tyre_products: [
+      { name: "price", type: "REAL DEFAULT 0" },
+      { name: "product_name", type: "TEXT" }
+    ],
+    customer_enquiries: [
+      { name: "amount", type: "REAL" },
+      { name: "estimated_budget", type: "REAL" },
+      { name: "tyre_size", type: "TEXT" },
+      { name: "tyre_brand", type: "TEXT" },
+      { name: "tyre_size_id", type: "TEXT" },
+      { name: "tyre_brand_id", type: "TEXT" },
+      { name: "car_brand_id", type: "TEXT" },
+      { name: "car_model_id", type: "TEXT" },
+      { name: "vehicle_type", type: "TEXT" },
+      { name: "fit_status", type: "TEXT" },
+      { name: "lead_source", type: "TEXT" },
+      { name: "enquiry_type", type: "TEXT" },
+      { name: "wheel_alignment", type: "TEXT" },
+      { name: "suitable_shop_id", type: "TEXT" },
+      { name: "not_fit_location", type: "TEXT" },
+      { name: "outside_shop_name", type: "TEXT" },
+      { name: "outside_shop_location", type: "TEXT" },
+      { name: "outside_shop_address", type: "TEXT" },
+      { name: "outside_shop_amount", type: "REAL" },
+      { name: "is_deleted", type: "INTEGER DEFAULT 0" }
+    ]
+  };
+
+  for (const [table, cols] of Object.entries(tableColumns)) {
+    const existing = await query(`PRAGMA table_info(${table})`);
+    const existingNames = new Set((existing || []).map((c) => c.name.toLowerCase()));
+
+    for (const col of cols) {
+      if (!existingNames.has(col.name.toLowerCase())) {
+        try {
+          await execute(`ALTER TABLE ${table} ADD COLUMN ${col.name} ${col.type}`);
+          console.log(`[Migration] SQLite: Added column ${table}.${col.name}`);
+        } catch (err) {
+          console.warn(`[Migration] SQLite warning adding ${table}.${col.name}:`, err.message);
+        }
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------------
+// PostgreSQL Table Creation & Idempotent Migrations
+// -------------------------------------------------------------------
 
 async function createTablesPostgres() {
   const schema = `
@@ -198,6 +432,7 @@ async function createTablesPostgres() {
       full_name VARCHAR(128) NOT NULL,
       role VARCHAR(32) DEFAULT 'EMPLOYEE',
       is_active SMALLINT DEFAULT 1,
+      is_deleted SMALLINT DEFAULT 0,
       created_at TIMESTAMP WITH TIME ZONE NOT NULL,
       created_by VARCHAR(64),
       last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -212,6 +447,7 @@ async function createTablesPostgres() {
       address TEXT,
       phone VARCHAR(32),
       is_active SMALLINT DEFAULT 1,
+      is_deleted SMALLINT DEFAULT 0,
       created_at TIMESTAMP WITH TIME ZONE NOT NULL,
       created_by VARCHAR(64),
       last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -227,6 +463,66 @@ async function createTablesPostgres() {
       UNIQUE(user_id, shop_id)
     );
 
+    CREATE TABLE IF NOT EXISTS tyre_sizes (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      size VARCHAR(64) NOT NULL,
+      is_active SMALLINT DEFAULT 1,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS tyre_brands (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name VARCHAR(128) NOT NULL,
+      is_active SMALLINT DEFAULT 1,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS tyre_products (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      tyre_size_id VARCHAR(64) NOT NULL REFERENCES tyre_sizes(id) ON DELETE CASCADE,
+      tyre_brand_id VARCHAR(64) NOT NULL REFERENCES tyre_brands(id) ON DELETE CASCADE,
+      vehicle_type VARCHAR(32) NOT NULL,
+      product_name VARCHAR(128),
+      price NUMERIC(10, 2) DEFAULT 0,
+      is_active SMALLINT DEFAULT 1,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS car_brands (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name VARCHAR(128) NOT NULL,
+      is_active SMALLINT DEFAULT 1,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS car_models (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      car_brand_id VARCHAR(64) NOT NULL REFERENCES car_brands(id) ON DELETE CASCADE,
+      name VARCHAR(128) NOT NULL,
+      is_active SMALLINT DEFAULT 1,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
     CREATE TABLE IF NOT EXISTS customer_enquiries (
       id VARCHAR(64) PRIMARY KEY,
       organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -239,11 +535,27 @@ async function createTablesPostgres() {
       tyre_brand VARCHAR(64),
       quantity INTEGER DEFAULT 4,
       estimated_budget NUMERIC(10, 2),
+      amount NUMERIC(10, 2),
       follow_up_date TIMESTAMP WITH TIME ZONE NOT NULL,
       status VARCHAR(32) DEFAULT 'PENDING',
       remarks TEXT,
       assigned_to_user_id VARCHAR(64) REFERENCES users(id),
       is_deleted SMALLINT DEFAULT 0,
+      car_brand_id VARCHAR(64),
+      car_model_id VARCHAR(64),
+      vehicle_type VARCHAR(32),
+      tyre_size_id VARCHAR(64),
+      tyre_brand_id VARCHAR(64),
+      fit_status VARCHAR(32),
+      lead_source VARCHAR(64),
+      enquiry_type VARCHAR(64),
+      wheel_alignment VARCHAR(64),
+      suitable_shop_id VARCHAR(64),
+      not_fit_location TEXT,
+      outside_shop_name VARCHAR(128),
+      outside_shop_location VARCHAR(128),
+      outside_shop_address TEXT,
+      outside_shop_amount NUMERIC(10, 2),
       created_at TIMESTAMP WITH TIME ZONE NOT NULL,
       created_by VARCHAR(64) NOT NULL,
       last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -261,11 +573,133 @@ async function createTablesPostgres() {
       created_at TIMESTAMP WITH TIME ZONE NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      shop_id VARCHAR(64) NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+      report_date DATE NOT NULL,
+      amount NUMERIC(10, 2) DEFAULT 0,
+      tyre_customer_quantity INTEGER DEFAULT 0,
+      tyre_mechanic_quantity INTEGER DEFAULT 0,
+      two_wheeler_enquiry_customer_quantity INTEGER DEFAULT 0,
+      two_wheeler_enquiry_mechanic_quantity INTEGER DEFAULT 0,
+      two_wheeler_alignment_customer_quantity INTEGER DEFAULT 0,
+      two_wheeler_alignment_mechanic_quantity INTEGER DEFAULT 0,
+      wheel_alignment_customer_quantity INTEGER DEFAULT 0,
+      wheel_alignment_mechanic_quantity INTEGER DEFAULT 0,
+      commercial_tyre_customer_quantity INTEGER DEFAULT 0,
+      commercial_tyre_mechanic_quantity INTEGER DEFAULT 0,
+      ro_water_customer_quantity INTEGER DEFAULT 0,
+      ro_water_mechanic_quantity INTEGER DEFAULT 0,
+      above_17_inch_customer_quantity INTEGER DEFAULT 0,
+      above_17_inch_mechanic_quantity INTEGER DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS monthly_targets (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      shop_id VARCHAR(64) NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+      target_year INTEGER NOT NULL,
+      target_month INTEGER NOT NULL,
+      amount_target NUMERIC(10, 2) DEFAULT 0,
+      tyre_target INTEGER DEFAULT 0,
+      two_wheeler_enquiry_target INTEGER DEFAULT 0,
+      two_wheeler_alignment_target INTEGER DEFAULT 0,
+      wheel_alignment_target INTEGER DEFAULT 0,
+      commercial_tyre_target INTEGER DEFAULT 0,
+      ro_water_target INTEGER DEFAULT 0,
+      above_17_inch_target INTEGER DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64),
+      last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_modified_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS enquiry_tyre_options (
+      id VARCHAR(64) PRIMARY KEY,
+      enquiry_id VARCHAR(64) NOT NULL REFERENCES customer_enquiries(id) ON DELETE CASCADE,
+      tyre_product_id VARCHAR(64) NOT NULL REFERENCES tyre_products(id) ON DELETE CASCADE,
+      option_order INTEGER NOT NULL,
+      price_snapshot NUMERIC(10, 2),
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_by VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      phone VARCHAR(32) PRIMARY KEY,
+      failed_attempts INTEGER DEFAULT 0,
+      locked_until TIMESTAMP WITH TIME ZONE,
+      last_attempt_at TIMESTAMP WITH TIME ZONE
+    );
+
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      jti VARCHAR(64) PRIMARY KEY,
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id);
     CREATE INDEX IF NOT EXISTS idx_shops_org ON shops(organization_id);
     CREATE INDEX IF NOT EXISTS idx_enquiries_org ON customer_enquiries(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_enquiries_shop_phone ON customer_enquiries(shop_id, customer_phone);
+    CREATE INDEX IF NOT EXISTS idx_enquiries_shop_status_date ON customer_enquiries(shop_id, status, follow_up_date);
+    CREATE INDEX IF NOT EXISTS idx_logs_enquiry ON enquiry_logs(enquiry_id);
   `;
-  await pgPool.query(schema);
+  try {
+    await pgPool.query(schema);
+    console.log("[Migration] PostgreSQL schema tables verified/created successfully.");
+  } catch (err) {
+    console.error("[Migration] FATAL: PostgreSQL table creation failed:", err);
+    if (process.env.NODE_ENV === "production") {
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+async function runPostgresMigrations() {
+  const alterStatements = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted SMALLINT DEFAULT 0;",
+    "ALTER TABLE shops ADD COLUMN IF NOT EXISTS is_deleted SMALLINT DEFAULT 0;",
+    "ALTER TABLE tyre_products ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2) DEFAULT 0;",
+    "ALTER TABLE tyre_products ADD COLUMN IF NOT EXISTS product_name VARCHAR(128);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS estimated_budget NUMERIC(10, 2);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS tyre_size VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS tyre_brand VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS tyre_size_id VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS tyre_brand_id VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS car_brand_id VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS car_model_id VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS fit_status VARCHAR(32);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS lead_source VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS enquiry_type VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS wheel_alignment VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS suitable_shop_id VARCHAR(64);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS not_fit_location TEXT;",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_name VARCHAR(128);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_location VARCHAR(128);",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_address TEXT;",
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_amount NUMERIC(10, 2);"
+  ];
+
+  try {
+    for (const sql of alterStatements) {
+      await pgPool.query(sql);
+    }
+    console.log(`[Migration] PostgreSQL: Applied ${alterStatements.length} idempotent column migrations successfully.`);
+  } catch (err) {
+    console.error("[Migration] FATAL: PostgreSQL migration failed:", err);
+    if (process.env.NODE_ENV === "production") {
+      process.exit(1);
+    }
+    throw err;
+  }
 }
 
 // -------------------------------------------------------------------
@@ -313,7 +747,7 @@ function execute(sql, params = []) {
 async function seedDatabaseIfEmpty() {
   const existingUsers = await getOne("SELECT COUNT(*) as count FROM users");
   const count = existingUsers ? parseInt(existingUsers.count || existingUsers.COUNT || 0, 10) : 0;
-  
+
   if (count > 0) {
     return;
   }
@@ -335,8 +769,8 @@ async function seedDatabaseIfEmpty() {
 
   // 1. Super Admin (SaaS Owner)
   await execute(
-    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, created_at, last_modified_at)
-     VALUES (?, NULL, ?, ?, ?, 'SUPER_ADMIN', 1, ?, ?)`,
+    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, is_deleted, created_at, last_modified_at)
+     VALUES (?, NULL, ?, ?, ?, 'SUPER_ADMIN', 1, 0, ?, ?)`,
     [superAdminId, "0000000000", superAdminPass, "Platform Super Admin", now, now]
   );
 
@@ -349,29 +783,29 @@ async function seedDatabaseIfEmpty() {
 
   // 3. Business Admin for Org 1 (Phone 9999999999 for backward compatibility)
   await execute(
-    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, 'ADMIN', 1, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, 'ADMIN', 1, 0, ?, ?, ?, ?)`,
     [admin1Id, org1Id, "9999999999", adminPass, "Rajesh Mehta (Apex Admin)", now, superAdminId, now, superAdminId]
   );
 
   // 4. Shops under Org 1
   await execute(
-    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)`,
     [shop1Id, org1Id, "Downtown Tyres & Alignment", "DWT-01", "101 MG Road, Downtown", "080-22334455", now, admin1Id, now, admin1Id]
   );
 
   await execute(
-    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)`,
     [shop2Id, org1Id, "Highway Hub Tyres & Wheels", "HWH-02", "45 Bypass Express Highway", "080-99887766", now, admin1Id, now, admin1Id]
   );
 
   // 5. Employees under Org 1
   // Employee 1: Rahul Sharma (Multi-Shop)
   await execute(
-    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, 'EMPLOYEE', 1, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, 'EMPLOYEE', 1, 0, ?, ?, ?, ?)`,
     [emp1Id, org1Id, "9811111111", empPass, "Rahul Sharma (Multi-Shop)", now, admin1Id, now, admin1Id]
   );
   await execute(`INSERT INTO user_shops (id, user_id, shop_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?, ?)`, [uuid(), emp1Id, shop1Id, now, admin1Id]);
@@ -379,13 +813,33 @@ async function seedDatabaseIfEmpty() {
 
   // Employee 2: Amit Patel (Single-Shop)
   await execute(
-    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, 'EMPLOYEE', 1, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, 'EMPLOYEE', 1, 0, ?, ?, ?, ?)`,
     [emp2Id, org1Id, "9822222222", empPass, "Amit Patel (Single-Shop)", now, admin1Id, now, admin1Id]
   );
   await execute(`INSERT INTO user_shops (id, user_id, shop_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?, ?)`, [uuid(), emp2Id, shop1Id, now, admin1Id]);
 
-  // 6. Sample Enquiries for Org 1
+  // 6. Master Data for Org 1 (Tyre Sizes, Brands, Products, Car Brands, Models)
+  const size1Id = uuid();
+  const size2Id = uuid();
+  await execute(`INSERT INTO tyre_sizes (id, organization_id, size, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, [size1Id, org1Id, "215/60 R17", now, admin1Id, now, admin1Id]);
+  await execute(`INSERT INTO tyre_sizes (id, organization_id, size, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, [size2Id, org1Id, "185/65 R15", now, admin1Id, now, admin1Id]);
+
+  const brand1Id = uuid();
+  const brand2Id = uuid();
+  await execute(`INSERT INTO tyre_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, [brand1Id, org1Id, "Bridgestone", now, admin1Id, now, admin1Id]);
+  await execute(`INSERT INTO tyre_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, [brand2Id, org1Id, "Michelin", now, admin1Id, now, admin1Id]);
+
+  const prod1Id = uuid();
+  await execute(`INSERT INTO tyre_products (id, organization_id, tyre_size_id, tyre_brand_id, vehicle_type, product_name, price, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`, [prod1Id, org1Id, size1Id, brand1Id, "FOUR_WHEELER", "Bridgestone Turanza", 6500, now, admin1Id, now, admin1Id]);
+
+  const carBrand1Id = uuid();
+  await execute(`INSERT INTO car_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, [carBrand1Id, org1Id, "Hyundai", now, admin1Id, now, admin1Id]);
+
+  const carModel1Id = uuid();
+  await execute(`INSERT INTO car_models (id, organization_id, car_brand_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`, [carModel1Id, org1Id, carBrand1Id, "Creta", now, admin1Id, now, admin1Id]);
+
+  // 7. Sample Enquiries for Org 1
   const todayDate = new Date();
   const tomorrowDate = new Date(todayDate);
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -396,20 +850,26 @@ async function seedDatabaseIfEmpty() {
   await execute(
     `INSERT INTO customer_enquiries (
       id, organization_id, shop_id, customer_name, customer_phone, vehicle_model, vehicle_reg, tyre_size, tyre_brand,
-      quantity, estimated_budget, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
+      tyre_size_id, tyre_brand_id, car_brand_id, car_model_id, vehicle_type, fit_status,
+      quantity, estimated_budget, amount, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
       created_at, created_by, last_modified_at, last_modified_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FOUR_WHEELER', 'FIT', ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
     [
       enquiry1Id,
       org1Id,
       shop1Id,
       "Vikram Malhotra",
       "9870001122",
-      "Hyundai Creta SX",
+      "Creta",
       "KA-01-MJ-4521",
       "215/60 R17",
-      "Bridgestone Dueler",
+      "Bridgestone",
+      size1Id,
+      brand1Id,
+      carBrand1Id,
+      carModel1Id,
       4,
+      38000,
       38000,
       todayDate.toISOString(),
       "Customer asked about warranty and installment options.",
@@ -431,9 +891,9 @@ async function seedDatabaseIfEmpty() {
   await execute(
     `INSERT INTO customer_enquiries (
       id, organization_id, shop_id, customer_name, customer_phone, vehicle_model, vehicle_reg, tyre_size, tyre_brand,
-      quantity, estimated_budget, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
+      tyre_size_id, tyre_brand_id, quantity, estimated_budget, amount, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
       created_at, created_by, last_modified_at, last_modified_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
     [
       uuid(),
       org1Id,
@@ -442,9 +902,12 @@ async function seedDatabaseIfEmpty() {
       "9870003344",
       "Honda City V",
       "KA-05-AA-7890",
-      "185/60 R15",
-      "Michelin Energy XM2+",
+      "185/65 R15",
+      "Michelin",
+      size2Id,
+      brand2Id,
       4,
+      28000,
       28000,
       tomorrowDate.toISOString(),
       "Follow up regarding stock arrival from warehouse.",
@@ -460,9 +923,9 @@ async function seedDatabaseIfEmpty() {
   await execute(
     `INSERT INTO customer_enquiries (
       id, organization_id, shop_id, customer_name, customer_phone, vehicle_model, vehicle_reg, tyre_size, tyre_brand,
-      quantity, estimated_budget, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
+      quantity, estimated_budget, amount, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
       created_at, created_by, last_modified_at, last_modified_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)`,
     [
       uuid(),
       org1Id,
@@ -472,8 +935,9 @@ async function seedDatabaseIfEmpty() {
       "Maruti Swift Dzire",
       "KA-03-NB-1234",
       "165/80 R14",
-      "JK Tyre / CEAT",
+      "CEAT",
       2,
+      8500,
       8500,
       yesterdayDate.toISOString(),
       "Urgent call required - front tyres worn out.",
@@ -489,9 +953,9 @@ async function seedDatabaseIfEmpty() {
   await execute(
     `INSERT INTO customer_enquiries (
       id, organization_id, shop_id, customer_name, customer_phone, vehicle_model, vehicle_reg, tyre_size, tyre_brand,
-      quantity, estimated_budget, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
+      quantity, estimated_budget, amount, follow_up_date, status, remarks, assigned_to_user_id, is_deleted,
       created_at, created_by, last_modified_at, last_modified_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 0, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 0, ?, ?, ?, ?)`,
     [
       uuid(),
       org1Id,
@@ -501,8 +965,9 @@ async function seedDatabaseIfEmpty() {
       "Toyota Fortuner",
       "KA-04-ZZ-9999",
       "265/65 R17",
-      "Goodyear Wrangler",
+      "Goodyear",
       4,
+      62000,
       62000,
       yesterdayDate.toISOString(),
       "Tyres fitted and alignment completed. Customer very satisfied.",
@@ -514,7 +979,7 @@ async function seedDatabaseIfEmpty() {
     ]
   );
 
-  // 7. Organization 2 (to verify Cross-Tenant Isolation): Prime Wheels Group
+  // 8. Organization 2 (to verify Cross-Tenant Isolation): Prime Wheels Group
   const org2Id = uuid();
   const admin2Id = uuid();
   const shop3Id = uuid();
@@ -526,14 +991,14 @@ async function seedDatabaseIfEmpty() {
   );
 
   await execute(
-    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, 'ADMIN', 1, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, organization_id, phone, password_hash, full_name, role, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, 'ADMIN', 1, 0, ?, ?, ?, ?)`,
     [admin2Id, org2Id, "8888888888", adminPass, "Sunil Sen (Prime Admin)", now, superAdminId, now, superAdminId]
   );
 
   await execute(
-    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, created_at, created_by, last_modified_at, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+    `INSERT INTO shops (id, organization_id, name, code, address, phone, is_active, is_deleted, created_at, created_by, last_modified_at, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)`,
     [shop3Id, org2Id, "Prime Wheels West Branch", "PWW-01", "West Industrial Zone", "080-77889900", now, admin2Id, now, admin2Id]
   );
 
@@ -561,17 +1026,17 @@ async function transaction(callback) {
       const clientWrapper = {
         query: (sql, params = []) => {
           let pIndex = 1;
-          const pgSql = sql.replace(/\?/g, () => `${pIndex++}`);
+          const pgSql = sql.replace(/\?/g, () => `$${pIndex++}`);
           return client.query(pgSql, params).then((res) => res.rows);
         },
         execute: (sql, params = []) => {
           let pIndex = 1;
-          const pgSql = sql.replace(/\?/g, () => `${pIndex++}`);
+          const pgSql = sql.replace(/\?/g, () => `$${pIndex++}`);
           return client.query(pgSql, params).then((res) => ({ rowCount: res.rowCount }));
         },
         getOne: (sql, params = []) => {
           let pIndex = 1;
-          const pgSql = sql.replace(/\?/g, () => `${pIndex++}`);
+          const pgSql = sql.replace(/\?/g, () => `$${pIndex++}`);
           return client.query(pgSql, params).then((res) => (res.rows.length > 0 ? res.rows[0] : null));
         },
       };

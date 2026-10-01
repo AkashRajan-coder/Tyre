@@ -6,23 +6,54 @@ const { apiLimiter } = require("./src/middlewares/rateLimiter");
 const swaggerUi = require("swagger-ui-express");
 const swaggerDocument = require("./src/config/swagger");
 const { initDatabase } = require("./src/config/db");
-const dailyReportRoutes = require("./src/routes/DailyReportRoutes");
 const apiRoutes = require("./src/routes");
 const { notFoundHandler, errorHandler } = require("./src/middlewares/error");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const HOST = "0.0.0.0";
 
-app.use(helmet({ contentSecurityPolicy: false })); // Security headers
-app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
+// Render reverse proxy trust for correct client IP detection in rate limiting
+app.set("trust proxy", 1);
+
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// CORS configuration: Allow native apps with no Origin header, restrict web browsers to CORS_ORIGIN
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : ["*"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile Flutter apps, Postman, curl, server-to-server)
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/api/v1/daily-reports", dailyReportRoutes);
+
+// Dedicated health check for Render & Flutter cold-start wake-up (unauthenticated, outside rate limiter)
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    status: "ok",
+  });
+});
 
 // Swagger UI interactive API documentation
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/docs", (req, res) => res.redirect("/api/docs"));
-
 
 // Root welcome route
 app.get("/", (req, res) => {
@@ -30,17 +61,18 @@ app.get("/", (req, res) => {
     name: "Tyre Shop SaaS Backend (Node.js/JavaScript)",
     version: "1.0.0",
     swaggerDocs: "/api/docs",
-    health: "/api/v1/health",
+    health: "/health",
     endpoints: {
       auth: "/api/v1/auth",
       employee: "/api/v1/employee",
       admin: "/api/v1/admin",
       superAdmin: "/api/v1/super-admin",
+      dailyReports: "/api/v1/daily-reports",
     },
   });
 });
 
-// Mount API v1
+// Mount API v1 under rate limiter
 app.use("/api/v1", apiLimiter, apiRoutes);
 
 // Error handlers
@@ -53,10 +85,10 @@ let server = null;
 if (require.main === module) {
   initDatabase()
     .then(() => {
-      server = app.listen(PORT, () => {
-        console.log(`🚀 Tyre Shop SaaS Backend running on http://localhost:${PORT}`);
-        console.log(`📖 Swagger API Docs: http://localhost:${PORT}/api/docs`);
-        console.log(`🔗 Health Check: http://localhost:${PORT}/api/v1/health`);
+      server = app.listen(PORT, HOST, () => {
+        console.log(`🚀 Tyre Shop SaaS Backend running on http://${HOST}:${PORT}`);
+        console.log(`📖 Swagger API Docs: http://${HOST}:${PORT}/api/docs`);
+        console.log(`🔗 Health Check: http://${HOST}:${PORT}/health`);
       });
     })
     .catch((err) => {

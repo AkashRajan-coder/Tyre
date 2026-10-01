@@ -124,28 +124,30 @@ npm test
 
 ---
 
-## 🗄️ Neon PostgreSQL Deployment, Backup & Restore
+## 🗄️ Render & Neon PostgreSQL Production Deployment
 
-### Production Environment Variables (.env)
-```env
-NODE_ENV=production
-PORT=5000
-DB_TYPE=postgres
-DATABASE_URL=postgresql://[user]:[password]@[endpoint].neon.tech/[dbname]?sslmode=require
-JWT_SECRET=use_a_strong_64_char_random_secret_in_production
-JWT_EXPIRES_IN=7d
-CORS_ORIGIN=https://admin.yourdomain.com,https://app.yourdomain.com
-```
+### Render Environment Variables Checklist
+Configure these in your Render Dashboard under **Environment**:
 
-### 1. Database Migration
-To apply all tables, indexes, constraints, and seeder on Neon:
-```bash
-npm run migrate
-```
-Or execute the standalone SQL script directly in the Neon SQL Editor:
-```bash
-psql "$DATABASE_URL" -f migrations.sql
-```
+| Variable | Value Description | Example |
+|---|---|---|
+| `NODE_ENV` | Must be `production` | `production` |
+| `PORT` | Injected automatically by Render (do not override) | `10000` |
+| `DATABASE_URL` | Neon PostgreSQL connection string (SSL required) | `postgresql://user:pass@ep-xyz.us-east-2.aws.neon.tech/neondb?sslmode=require` |
+| `JWT_SECRET` | Secret key used for signing JWT tokens | `strong_random_secret_at_least_32_characters` |
+| `CORS_ORIGIN` | Comma-separated list of web origins (Flutter mobile apps require no Origin and are always allowed) | `*` or `https://admin.yourdomain.com` |
+
+### 1. Automatic Zero-Touch Migrations on Render Startup
+Because Render provides no interactive shell in standard web service deploys, the backend runs **automated, idempotent database migrations on every server startup**:
+- Runs `CREATE TABLE IF NOT EXISTS` for all 14 SaaS schema tables.
+- Runs guarded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for all incremental columns (`is_deleted`, `price`, `customer_enquiries` fields).
+- Multi-tenant initial accounts and master data are seeded automatically if the database is fresh.
+- If migrations fail in production, the server logs a fatal diagnostic message and exits immediately to prevent corrupted runtime state.
+
+### 2. Health Check & Cold-Start Wake-up
+- `GET /health` is unauthenticated and resides outside the rate limiter.
+- Returns `{ "success": true, "status": "ok" }`.
+- Use `https://<your-render-service>.onrender.com/health` in Render Health Check path and in Flutter client on app startup to wake up free/starter instances.
 
 ### 2. Backup Procedures
 1. **Neon Serverless Branching (Instant Zero-Downtime Backup)**:

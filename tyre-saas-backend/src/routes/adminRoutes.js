@@ -55,6 +55,11 @@ router.get(
   AdminController.listShops
 );
 
+router.get(
+  "/shops/:id",
+  AdminController.getShopById
+);
+
 router.post(
   "/shops",
   AdminController.createShop
@@ -96,6 +101,11 @@ router.delete(
 router.get(
   "/users",
   AdminController.listUsers
+);
+
+router.get(
+  "/users/:id",
+  AdminController.getUserById
 );
 
 router.post(

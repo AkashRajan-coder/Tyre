@@ -1,0 +1,1106 @@
+{
+  "service": "tyre-saas-backend",
+  "version": "1.0.0",
+  "description": "Complete Multi-Tenant Tyre Shop SaaS API specification with validation rules, payload schemas, and example values.",
+  "responseEnvelope": {
+    "success": {
+      "success": true,
+      "data": {}
+    },
+    "error": {
+      "success": false,
+      "message": "Error description"
+    }
+  },
+  "endpoints": [
+    {
+      "id": "health-root",
+      "group": "System & Health",
+      "method": "GET",
+      "path": "/health",
+      "auth": { "required": false },
+      "rateLimiter": "None",
+      "description": "Render health check & mobile wakeup ping.",
+      "queryParams": [],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "success": true,
+          "status": "ok"
+        }
+      }
+    },
+    {
+      "id": "health-v1",
+      "group": "System & Health",
+      "method": "GET",
+      "path": "/api/v1/health",
+      "auth": { "required": false },
+      "rateLimiter": "apiLimiter",
+      "description": "API v1 service status check.",
+      "queryParams": [],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "status": "healthy",
+          "service": "Tyre Shop SaaS Multi-Tenant API (JS)",
+          "timestamp": "2026-10-01T06:00:00.000Z"
+        }
+      }
+    },
+    {
+      "id": "auth-login",
+      "group": "Authentication",
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "auth": { "required": false },
+      "rateLimiter": "loginLimiter (5 failed attempts per phone locks for 15 minutes)",
+      "description": "Authenticate user via phone and password.",
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          {
+            "name": "phone",
+            "type": "string",
+            "required": true,
+            "validation": "Non-empty string. Exactly 10 digits recommended.",
+            "example": "9999999999"
+          },
+          {
+            "name": "password",
+            "type": "string",
+            "required": true,
+            "validation": "Non-empty string. Verified via bcrypt.",
+            "example": "admin123"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+            "user": {
+              "id": "u-1234-uuid",
+              "phone": "9999999999",
+              "fullName": "Rajesh Mehta",
+              "role": "ADMIN",
+              "organizationId": "org-5678-uuid"
+            }
+          }
+        },
+        "400": { "success": false, "message": "Phone and password are required" },
+        "401": { "success": false, "message": "Invalid credentials" },
+        "403": { "success": false, "message": "Account or organization has been deactivated" },
+        "429": { "success": false, "message": "Too many failed login attempts. Please try again later." }
+      }
+    },
+    {
+      "id": "auth-me",
+      "group": "Authentication",
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "auth": { "required": true, "roles": ["ADMIN", "EMPLOYEE", "SUPER_ADMIN"], "header": "Authorization: Bearer <token>" },
+      "rateLimiter": "apiLimiter",
+      "description": "Fetch current authenticated user profile and tenant details.",
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "id": "u-1234-uuid",
+            "phone": "9999999999",
+            "fullName": "Rajesh Mehta",
+            "role": "ADMIN",
+            "organizationId": "org-5678-uuid"
+          }
+        }
+      }
+    },
+    {
+      "id": "auth-logout",
+      "group": "Authentication",
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "auth": { "required": true, "roles": ["ADMIN", "EMPLOYEE", "SUPER_ADMIN"], "header": "Authorization: Bearer <token>" },
+      "rateLimiter": "apiLimiter",
+      "description": "Invalidates JWT token by inserting jti into revoked_tokens table.",
+      "requestBody": null,
+      "responses": {
+        "200": { "success": true, "message": "Logout successful" }
+      }
+    },
+    {
+      "id": "employee-get-shops",
+      "group": "Employee - Shops",
+      "method": "GET",
+      "path": "/api/v1/employee/shops",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"], "header": "Authorization: Bearer <token>" },
+      "rateLimiter": "apiLimiter",
+      "description": "Lists shops the employee is mapped to via user_shops (or all org shops for Admin).",
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            {
+              "id": "shop-1111-uuid",
+              "organization_id": "org-5678-uuid",
+              "name": "Downtown Tyres & Alignment",
+              "code": "DWT-01",
+              "address": "101 MG Road, Downtown",
+              "phone": "080-22334455"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "employee-banner-summary",
+      "group": "Employee - Dashboard",
+      "method": "GET",
+      "path": "/api/v1/employee/banner-summary",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Follow-up counters (due today, due tomorrow, overdue) for the active shop.",
+      "queryParams": [
+        {
+          "name": "shopId",
+          "type": "string",
+          "required": false,
+          "validation": "UUID. If omitted, defaults to first assigned shop.",
+          "example": "shop-1111-uuid"
+        }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "dueToday": 4,
+            "dueTomorrow": 2,
+            "overdue": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "employee-check-duplicate",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/check-duplicate",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Check if a customer phone already has an open enquiry for this shop.",
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": true, "example": "shop-1111-uuid" },
+        { "name": "phone", "type": "string", "required": true, "example": "9876543210" }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "isDuplicate": true,
+            "existingEnquiry": {
+              "id": "enq-9999-uuid",
+              "customer_name": "Ramesh Sharma",
+              "customer_phone": "9876543210",
+              "status": "PENDING",
+              "assigned_to": "Amit Patel"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "employee-create-enquiry",
+      "group": "Employee - Enquiries",
+      "method": "POST",
+      "path": "/api/v1/employee/enquiries",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Creates customer enquiry. Tolerant to both legacy Flutter payload (estimatedBudget, tyreSize, tyreBrand) and modern payload (amount, tyreSizeId, tyreBrandId).",
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "shopId", "type": "string", "required": true, "validation": "UUID of assigned active shop.", "example": "shop-1111-uuid" },
+          { "name": "customerName", "type": "string", "required": true, "validation": "Non-empty string.", "example": "Rahul Varma" },
+          { "name": "customerPhone", "type": "string", "required": true, "validation": "10-15 digits string.", "example": "9876543210" },
+          { "name": "amount", "type": "number", "required": false, "validation": "Budget amount >= 0. Accepted as amount ?? estimatedBudget. 0 is allowed.", "example": 28000 },
+          { "name": "estimatedBudget", "type": "number", "required": false, "validation": "Legacy field name for budget >= 0.", "example": 28000 },
+          { "name": "tyreSizeId", "type": "string", "required": false, "validation": "UUID from tyre_sizes. Required if tyreSize text is omitted.", "example": "size-1111-uuid" },
+          { "name": "tyreSize", "type": "string", "required": false, "validation": "Text specification (e.g. 215/60 R17). Best-effort matches tyre_size_id.", "example": "215/60 R17" },
+          { "name": "tyreBrandId", "type": "string", "required": false, "validation": "UUID from tyre_brands. Required if tyreBrand text is omitted.", "example": "brand-1111-uuid" },
+          { "name": "tyreBrand", "type": "string", "required": false, "validation": "Text brand name. Best-effort matches tyre_brand_id.", "example": "Bridgestone" },
+          { "name": "vehicleType", "type": "string", "required": false, "validation": "Enum: TWO_WHEELER | FOUR_WHEELER | COMMERCIAL. Default: FOUR_WHEELER.", "example": "FOUR_WHEELER" },
+          { "name": "vehicleModel", "type": "string", "required": false, "validation": "Car model name.", "example": "Creta SX" },
+          { "name": "vehicleReg", "type": "string", "required": false, "validation": "License registration number.", "example": "KA-01-MJ-4521" },
+          { "name": "carBrandId", "type": "string", "required": false, "validation": "UUID from car_brands.", "example": "carbrand-1111-uuid" },
+          { "name": "carModelId", "type": "string", "required": false, "validation": "UUID from car_models.", "example": "carmodel-1111-uuid" },
+          { "name": "fitStatus", "type": "string", "required": false, "validation": "Enum: FIT | UNFIT. Default: FIT.", "example": "FIT" },
+          { "name": "unfitReason", "type": "string", "required": false, "validation": "Required if fitStatus is UNFIT.", "example": "Tyre size out of stock" },
+          { "name": "quantity", "type": "integer", "required": false, "validation": "Positive integer >= 1. Default: 4.", "example": 4 },
+          { "name": "followUpDate", "type": "string", "required": true, "validation": "ISO 8601 date string.", "example": "2026-10-05T10:00:00.000Z" },
+          { "name": "remarks", "type": "string", "required": false, "validation": "Free-form follow-up note.", "example": "Customer prefers payment via UPI" }
+        ]
+      },
+      "responses": {
+        "201": {
+          "success": true,
+          "data": {
+            "id": "enq-9999-uuid",
+            "customer_name": "Rahul Varma",
+            "customer_phone": "9876543210",
+            "amount": 28000,
+            "estimated_budget": 28000,
+            "tyre_size": "215/60 R17",
+            "tyre_brand": "Bridgestone",
+            "tyre_size_id": "size-1111-uuid",
+            "tyre_brand_id": "brand-1111-uuid",
+            "status": "PENDING"
+          }
+        },
+        "400": { "success": false, "message": "amount must be a valid positive number" },
+        "403": { "success": false, "message": "Access denied: You are not assigned to this shop" }
+      }
+    },
+    {
+      "id": "employee-get-pending",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/pending",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Lists active pending follow-up enquiries.",
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false, "example": "shop-1111-uuid" },
+        { "name": "type", "type": "string", "required": false, "validation": "today | tomorrow | overdue | all", "example": "today" },
+        { "name": "search", "type": "string", "required": false, "example": "Rahul" },
+        { "name": "page", "type": "integer", "required": false, "example": 1 },
+        { "name": "limit", "type": "integer", "required": false, "example": 20 }
+      ],
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [],
+          "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+        }
+      }
+    },
+    {
+      "id": "employee-get-completed",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/completed",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Lists closed enquiries (status WON or LOST).",
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false },
+        { "name": "page", "type": "integer", "required": false, "example": 1 },
+        { "name": "limit", "type": "integer", "required": false, "example": 20 }
+      ],
+      "responses": {
+        "200": { "success": true, "data": [] }
+      }
+    },
+    {
+      "id": "employee-search",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/search",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Search enquiries across customer name, phone, or vehicle registration.",
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false },
+        { "name": "q", "type": "string", "required": true, "example": "9876" }
+      ],
+      "responses": {
+        "200": { "success": true, "data": [] }
+      }
+    },
+    {
+      "id": "employee-get-no-response",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/enquiries/no-response",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Lists enquiries marked as NO_RESPONSE.",
+      "queryParams": [{ "name": "shopId", "type": "string", "required": false }],
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "employee-get-enquiry-by-id",
+      "group": "Employee - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/employee/enquiries/:id",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Fetch single enquiry detail with full audit logs.",
+      "pathParams": [{ "name": "id", "type": "string", "required": true, "example": "enq-9999-uuid" }],
+      "responses": {
+        "200": { "success": true, "data": { "id": "enq-9999-uuid", "customer_name": "Rahul Varma", "logs": [] } },
+        "404": { "success": false, "message": "Enquiry not found" }
+      }
+    },
+    {
+      "id": "employee-update-enquiry",
+      "group": "Employee - Enquiries",
+      "method": "PATCH",
+      "path": "/api/v1/employee/enquiries/:id",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Update enquiry status, reschedule follow-up, change budget, or log remarks.",
+      "pathParams": [{ "name": "id", "type": "string", "required": true, "example": "enq-9999-uuid" }],
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "status", "type": "string", "required": false, "validation": "Enum: PENDING | WON | LOST | NO_RESPONSE | FOLLOW_UP", "example": "WON" },
+          { "name": "lossReason", "type": "string", "required": false, "validation": "Required if status is LOST", "example": "Found lower price online" },
+          { "name": "followUpDate", "type": "string", "required": false, "validation": "ISO 8601 string. Required if status is PENDING or FOLLOW_UP", "example": "2026-10-10T10:00:00.000Z" },
+          { "name": "remarks", "type": "string", "required": false, "example": "Customer confirmed booking" },
+          { "name": "amount", "type": "number", "required": false, "example": 29000 },
+          { "name": "estimatedBudget", "type": "number", "required": false, "example": 29000 }
+        ]
+      },
+      "responses": {
+        "200": { "success": true, "data": { "id": "enq-9999-uuid", "status": "WON" } }
+      }
+    },
+    {
+      "id": "employee-get-tyre-sizes",
+      "group": "Employee - Catalog",
+      "method": "GET",
+      "path": "/api/v1/employee/tyre-sizes",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Read-only list of active tyre sizes for employee's organization.",
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            { "id": "size-1111-uuid", "size": "215/60 R17", "is_active": 1 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "employee-get-tyre-brands",
+      "group": "Employee - Catalog",
+      "method": "GET",
+      "path": "/api/v1/employee/tyre-brands",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Read-only list of active tyre brands for employee's organization.",
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            { "id": "brand-1111-uuid", "name": "Bridgestone", "is_active": 1 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "employee-get-tyre-products",
+      "group": "Employee - Catalog",
+      "method": "GET",
+      "path": "/api/v1/employee/tyre-products",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "List available tyre products with size, brand, and vehicleType filters.",
+      "queryParams": [
+        { "name": "tyreSizeId", "type": "string", "required": false },
+        { "name": "tyreBrandId", "type": "string", "required": false },
+        { "name": "vehicleType", "type": "string", "required": false, "validation": "TWO_WHEELER | FOUR_WHEELER | COMMERCIAL" }
+      ],
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            {
+              "id": "prod-1111-uuid",
+              "product_name": "Bridgestone Turanza",
+              "price": 6500.00,
+              "size": "215/60 R17",
+              "brand_name": "Bridgestone",
+              "vehicle_type": "FOUR_WHEELER"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "employee-get-car-brands",
+      "group": "Employee - Catalog",
+      "method": "GET",
+      "path": "/api/v1/employee/car-brands",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "responses": {
+        "200": { "success": true, "data": [{ "id": "cb-1111-uuid", "name": "Hyundai" }] }
+      }
+    },
+    {
+      "id": "employee-get-car-models",
+      "group": "Employee - Catalog",
+      "method": "GET",
+      "path": "/api/v1/employee/car-models",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "queryParams": [{ "name": "brandId", "type": "string", "required": false, "example": "cb-1111-uuid" }],
+      "responses": {
+        "200": { "success": true, "data": [{ "id": "cm-1111-uuid", "name": "Creta" }] }
+      }
+    },
+    {
+      "id": "employee-get-target-dashboard",
+      "group": "Employee - Targets",
+      "method": "GET",
+      "path": "/api/v1/employee/target-dashboard",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": true },
+        { "name": "month", "type": "integer", "required": false, "example": 10 },
+        { "name": "year", "type": "integer", "required": false, "example": 2026 }
+      ],
+      "responses": {
+        "200": { "success": true, "data": { "targets": {}, "achievements": {} } }
+      }
+    },
+    {
+      "id": "daily-reports-get",
+      "group": "Daily Reports",
+      "method": "GET",
+      "path": "/api/v1/daily-reports",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "rateLimiter": "apiLimiter",
+      "description": "Fetch daily reports. Admin sees all org shops; employee only sees assigned shops (403 if unassigned).",
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false, "example": "shop-1111-uuid" },
+        { "name": "from", "type": "string", "required": false, "validation": "YYYY-MM-DD", "example": "2026-10-01" },
+        { "name": "to", "type": "string", "required": false, "validation": "YYYY-MM-DD", "example": "2026-10-01" },
+        { "name": "limit", "type": "integer", "required": false, "example": 50 },
+        { "name": "offset", "type": "integer", "required": false, "example": 0 }
+      ],
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            {
+              "id": "rep-1111-uuid",
+              "shop_id": "shop-1111-uuid",
+              "shop_name": "Downtown Tyres & Alignment",
+              "report_date": "2026-10-01",
+              "amount": 12500
+            }
+          ],
+          "meta": { "total": 1, "limit": 50, "offset": 0 }
+        },
+        "403": { "success": false, "message": "Access denied: You are not assigned to this shop" }
+      }
+    },
+    {
+      "id": "daily-reports-create",
+      "group": "Daily Reports",
+      "method": "POST",
+      "path": "/api/v1/daily-reports",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "shopId", "type": "string", "required": true, "example": "shop-1111-uuid" },
+          { "name": "reportDate", "type": "string", "required": false, "validation": "YYYY-MM-DD. Defaults to today.", "example": "2026-10-01" },
+          { "name": "amount", "type": "number", "required": true, "example": 15000 },
+          { "name": "twoWheelerTyres", "type": "integer", "required": false, "example": 2 },
+          { "name": "fourWheelerTyres", "type": "integer", "required": false, "example": 4 },
+          { "name": "wheelAlignmentCount", "type": "integer", "required": false, "example": 3 }
+        ]
+      },
+      "responses": {
+        "201": { "success": true, "data": { "id": "rep-1111-uuid", "amount": 15000 } }
+      }
+    },
+    {
+      "id": "daily-reports-increment",
+      "group": "Daily Reports",
+      "method": "PUT",
+      "path": "/api/v1/daily-reports",
+      "auth": { "required": true, "roles": ["EMPLOYEE", "ADMIN"] },
+      "description": "Increments counts and amounts for today's daily report.",
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "shopId", "type": "string", "required": true, "example": "shop-1111-uuid" },
+          { "name": "amount", "type": "number", "required": true, "example": 3500 },
+          { "name": "fourWheelerTyres", "type": "integer", "required": false, "example": 2 }
+        ]
+      },
+      "responses": {
+        "200": { "success": true, "data": { "id": "rep-1111-uuid", "amount": 18500 } }
+      }
+    },
+    {
+      "id": "admin-get-dashboard",
+      "group": "Admin - Dashboard",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false },
+        { "name": "range", "type": "string", "required": false, "validation": "today | week | month", "example": "month" }
+      ],
+      "responses": {
+        "200": { "success": true, "data": { "totalEnquiries": 25, "wonEnquiries": 18, "revenue": 145000 } }
+      }
+    },
+    {
+      "id": "admin-get-enquiries",
+      "group": "Admin - Enquiries",
+      "method": "GET",
+      "path": "/api/v1/admin/enquiries",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false },
+        { "name": "status", "type": "string", "required": false },
+        { "name": "from", "type": "string", "required": false },
+        { "name": "to", "type": "string", "required": false },
+        { "name": "page", "type": "integer", "required": false },
+        { "name": "limit", "type": "integer", "required": false }
+      ],
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "admin-reassign-enquiry",
+      "group": "Admin - Enquiries",
+      "method": "PATCH",
+      "path": "/api/v1/admin/enquiries/:id/reassign",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "assignedToUserId", "type": "string", "required": true, "validation": "Must be valid user mapped to the enquiry shop.", "example": "u-2222-uuid" }
+        ]
+      },
+      "responses": { "200": { "success": true, "message": "Enquiry reassigned successfully" } }
+    },
+    {
+      "id": "admin-delete-enquiry",
+      "group": "Admin - Enquiries",
+      "method": "DELETE",
+      "path": "/api/v1/admin/enquiries/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "description": "Soft deletes enquiry (is_deleted = 1).",
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "responses": { "200": { "success": true, "message": "Enquiry deleted" } }
+    },
+    {
+      "id": "admin-list-shops",
+      "group": "Admin - Shops",
+      "method": "GET",
+      "path": "/api/v1/admin/shops",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "admin-get-shop-by-id",
+      "group": "Admin - Shops",
+      "method": "GET",
+      "path": "/api/v1/admin/shops/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "description": "Returns single shop. 404 if soft deleted or not in admin's organization.",
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "id": "shop-1111-uuid",
+            "name": "Downtown Tyres & Alignment",
+            "code": "DWT-01",
+            "address": "101 MG Road",
+            "phone": "080-22334455",
+            "is_active": 1
+          }
+        },
+        "404": { "success": false, "message": "Shop not found or access denied" }
+      }
+    },
+    {
+      "id": "admin-create-shop",
+      "group": "Admin - Shops",
+      "method": "POST",
+      "path": "/api/v1/admin/shops",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "name", "type": "string", "required": true, "example": "Airport Express Tyre Point" },
+          { "name": "code", "type": "string", "required": true, "validation": "Unique shop code within organization.", "example": "AEP-03" },
+          { "name": "address", "type": "string", "required": false, "example": "Near Terminal 1, Airport Road" },
+          { "name": "phone", "type": "string", "required": false, "example": "080-44556677" }
+        ]
+      },
+      "responses": {
+        "201": { "success": true, "data": { "id": "shop-3333-uuid", "name": "Airport Express Tyre Point" } }
+      }
+    },
+    {
+      "id": "admin-update-shop",
+      "group": "Admin - Shops",
+      "method": "PATCH",
+      "path": "/api/v1/admin/shops/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "name", "type": "string", "required": false },
+          { "name": "code", "type": "string", "required": false },
+          { "name": "address", "type": "string", "required": false },
+          { "name": "phone", "type": "string", "required": false }
+        ]
+      },
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "admin-deactivate-shop",
+      "group": "Admin - Shops",
+      "method": "PATCH",
+      "path": "/api/v1/admin/shops/:id/deactivate",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "message": "Shop deactivated successfully" } }
+    },
+    {
+      "id": "admin-activate-shop",
+      "group": "Admin - Shops",
+      "method": "PATCH",
+      "path": "/api/v1/admin/shops/:id/activate",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "message": "Shop activated successfully" } }
+    },
+    {
+      "id": "admin-delete-shop",
+      "group": "Admin - Shops",
+      "method": "DELETE",
+      "path": "/api/v1/admin/shops/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "description": "Soft deletes shop (is_deleted = 1).",
+      "responses": { "200": { "success": true, "message": "Shop deleted successfully" } }
+    },
+    {
+      "id": "admin-list-users",
+      "group": "Admin - Users",
+      "method": "GET",
+      "path": "/api/v1/admin/users",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "queryParams": [{ "name": "role", "type": "string", "required": false, "validation": "ADMIN | EMPLOYEE" }],
+      "responses": {
+        "200": {
+          "success": true,
+          "data": [
+            {
+              "id": "u-2222-uuid",
+              "full_name": "Rahul Sharma",
+              "phone": "9811111111",
+              "role": "EMPLOYEE",
+              "is_active": 1,
+              "shops": [{ "id": "shop-1111-uuid", "name": "Downtown Tyres & Alignment" }]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "admin-get-user-by-id",
+      "group": "Admin - Users",
+      "method": "GET",
+      "path": "/api/v1/admin/users/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "description": "Returns user without password_hash and includes assigned shop array.",
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "id": "u-2222-uuid",
+            "full_name": "Rahul Sharma",
+            "phone": "9811111111",
+            "role": "EMPLOYEE",
+            "is_active": 1,
+            "shops": [{ "id": "shop-1111-uuid", "name": "Downtown Tyres & Alignment" }]
+          }
+        },
+        "404": { "success": false, "message": "User not found or access denied" }
+      }
+    },
+    {
+      "id": "admin-create-user",
+      "group": "Admin - Users",
+      "method": "POST",
+      "path": "/api/v1/admin/users",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "phone", "type": "string", "required": true, "validation": "10 digits string.", "example": "9833333333" },
+          { "name": "password", "type": "string", "required": true, "validation": "Minimum 6 characters.", "example": "empSecret123" },
+          { "name": "fullName", "type": "string", "required": true, "example": "Suresh Raina" },
+          { "name": "role", "type": "string", "required": true, "validation": "ADMIN | EMPLOYEE", "example": "EMPLOYEE" },
+          { "name": "shopIds", "type": "array<string>", "required": true, "validation": "Array of shop UUIDs. Mandatory when role is EMPLOYEE.", "example": ["shop-1111-uuid"] }
+        ]
+      },
+      "responses": {
+        "201": { "success": true, "data": { "id": "u-3333-uuid", "phone": "9833333333", "role": "EMPLOYEE" } }
+      }
+    },
+    {
+      "id": "admin-update-user",
+      "group": "Admin - Users",
+      "method": "PATCH",
+      "path": "/api/v1/admin/users/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "fullName", "type": "string", "required": false },
+          { "name": "phone", "type": "string", "required": false },
+          { "name": "role", "type": "string", "required": false, "validation": "ADMIN | EMPLOYEE" },
+          { "name": "shopIds", "type": "array<string>", "required": false },
+          { "name": "isActive", "type": "integer", "required": false, "validation": "0 or 1" }
+        ]
+      },
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "admin-reset-user-password",
+      "group": "Admin - Users",
+      "method": "POST",
+      "path": "/api/v1/admin/users/:id/reset-password",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "fields": [
+          { "name": "newPassword", "type": "string", "required": true, "validation": "Minimum 6 characters", "example": "newSecret456" }
+        ]
+      },
+      "responses": { "200": { "success": true, "message": "Password reset successfully" } }
+    },
+    {
+      "id": "admin-deactivate-user",
+      "group": "Admin - Users",
+      "method": "PATCH",
+      "path": "/api/v1/admin/users/:id/deactivate",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "message": "User deactivated successfully" } }
+    },
+    {
+      "id": "admin-activate-user",
+      "group": "Admin - Users",
+      "method": "PATCH",
+      "path": "/api/v1/admin/users/:id/activate",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "message": "User activated successfully" } }
+    },
+    {
+      "id": "admin-delete-user",
+      "group": "Admin - Users",
+      "method": "DELETE",
+      "path": "/api/v1/admin/users/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "description": "Soft deletes user (is_deleted = 1).",
+      "responses": { "200": { "success": true, "message": "User deleted successfully" } }
+    },
+    {
+      "id": "admin-list-tyre-sizes",
+      "group": "Admin - Master Data",
+      "method": "GET",
+      "path": "/api/v1/admin/tyre-sizes",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "admin-create-tyre-size",
+      "group": "Admin - Master Data",
+      "method": "POST",
+      "path": "/api/v1/admin/tyre-sizes",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "fields": [{ "name": "size", "type": "string", "required": true, "example": "195/65 R15" }]
+      },
+      "responses": { "201": { "success": true, "data": { "id": "size-2222-uuid", "size": "195/65 R15" } } }
+    },
+    {
+      "id": "admin-update-tyre-size",
+      "group": "Admin - Master Data",
+      "method": "PATCH",
+      "path": "/api/v1/admin/tyre-sizes/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "fields": [{ "name": "size", "type": "string", "required": true, "example": "205/65 R15" }]
+      },
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "admin-list-tyre-brands",
+      "group": "Admin - Master Data",
+      "method": "GET",
+      "path": "/api/v1/admin/tyre-brands",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "admin-create-tyre-brand",
+      "group": "Admin - Master Data",
+      "method": "POST",
+      "path": "/api/v1/admin/tyre-brands",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "fields": [{ "name": "name", "type": "string", "required": true, "example": "Goodyear" }]
+      },
+      "responses": { "201": { "success": true, "data": { "id": "brand-2222-uuid", "name": "Goodyear" } } }
+    },
+    {
+      "id": "admin-update-tyre-brand",
+      "group": "Admin - Master Data",
+      "method": "PATCH",
+      "path": "/api/v1/admin/tyre-brands/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "fields": [{ "name": "name", "type": "string", "required": true, "example": "Goodyear Tyres" }]
+      },
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "admin-list-tyre-products",
+      "group": "Admin - Master Data",
+      "method": "GET",
+      "path": "/api/v1/admin/tyre-products",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "queryParams": [
+        { "name": "tyreSizeId", "type": "string", "required": false },
+        { "name": "tyreBrandId", "type": "string", "required": false },
+        { "name": "vehicleType", "type": "string", "required": false }
+      ],
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "admin-create-tyre-product",
+      "group": "Admin - Master Data",
+      "method": "POST",
+      "path": "/api/v1/admin/tyre-products",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "tyreSizeId", "type": "string", "required": true, "example": "size-1111-uuid" },
+          { "name": "tyreBrandId", "type": "string", "required": true, "example": "brand-1111-uuid" },
+          { "name": "vehicleType", "type": "string", "required": true, "validation": "TWO_WHEELER | FOUR_WHEELER | COMMERCIAL", "example": "FOUR_WHEELER" },
+          { "name": "productName", "type": "string", "required": false, "example": "Michelin Primacy 4" },
+          { "name": "price", "type": "number", "required": false, "validation": "Numeric >= 0", "example": 8200.00 }
+        ]
+      },
+      "responses": {
+        "201": { "success": true, "data": { "id": "prod-2222-uuid", "price": 8200 } }
+      }
+    },
+    {
+      "id": "admin-update-tyre-product",
+      "group": "Admin - Master Data",
+      "method": "PATCH",
+      "path": "/api/v1/admin/tyre-products/:id",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true, "example": "prod-2222-uuid" }],
+      "description": "True partial update. Updating only price or any subset of fields is allowed.",
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "price", "type": "number", "required": false, "validation": "Numeric >= 0", "example": 7999.50 },
+          { "name": "productName", "type": "string", "required": false, "example": "Michelin Primacy 4 ST" },
+          { "name": "tyreSizeId", "type": "string", "required": false },
+          { "name": "tyreBrandId", "type": "string", "required": false },
+          { "name": "vehicleType", "type": "string", "required": false, "validation": "TWO_WHEELER | FOUR_WHEELER | COMMERCIAL" },
+          { "name": "isActive", "type": "integer", "required": false, "validation": "0 or 1" }
+        ]
+      },
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "id": "prod-2222-uuid",
+            "product_name": "Michelin Primacy 4 ST",
+            "price": 7999.50,
+            "vehicle_type": "FOUR_WHEELER"
+          }
+        }
+      }
+    },
+    {
+      "id": "admin-export-csv",
+      "group": "Admin - Reports",
+      "method": "GET",
+      "path": "/api/v1/admin/export/csv",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "queryParams": [
+        { "name": "shopId", "type": "string", "required": false },
+        { "name": "status", "type": "string", "required": false },
+        { "name": "from", "type": "string", "required": false },
+        { "name": "to", "type": "string", "required": false }
+      ],
+      "responses": {
+        "200": { "contentType": "text/csv", "description": "Downloads enquiry CSV file." }
+      }
+    },
+    {
+      "id": "admin-shops-with-employees",
+      "group": "Admin - Reports",
+      "method": "GET",
+      "path": "/api/v1/admin/shops-with-employees",
+      "auth": { "required": true, "roles": ["ADMIN"] },
+      "responses": {
+        "200": { "success": true, "data": [] }
+      }
+    },
+    {
+      "id": "superadmin-get-dashboard",
+      "group": "Super Admin - Platform",
+      "method": "GET",
+      "path": "/api/v1/super-admin/dashboard",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "responses": {
+        "200": {
+          "success": true,
+          "data": {
+            "totalOrganizations": 5,
+            "totalShops": 14,
+            "totalAdmins": 6,
+            "totalEmployees": 22,
+            "totalEnquiries": 350
+          }
+        }
+      }
+    },
+    {
+      "id": "superadmin-list-organizations",
+      "group": "Super Admin - Organizations",
+      "method": "GET",
+      "path": "/api/v1/super-admin/organizations",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "superadmin-create-organization",
+      "group": "Super Admin - Organizations",
+      "method": "POST",
+      "path": "/api/v1/super-admin/organizations",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "description": "Provisions new tenant organization and its initial business admin in a single atomic transaction.",
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "fields": [
+          { "name": "name", "type": "string", "required": true, "example": "Prime Wheels Enterprise" },
+          { "name": "phone", "type": "string", "required": false, "example": "080-88776655" },
+          { "name": "email", "type": "string", "required": false, "example": "info@primewheels.com" },
+          { "name": "address", "type": "string", "required": false, "example": "Outer Ring Road, Bangalore" },
+          { "name": "adminFullName", "type": "string", "required": true, "example": "Kavita Rao" },
+          { "name": "adminPhone", "type": "string", "required": true, "validation": "10 digits string.", "example": "8888888888" },
+          { "name": "adminPassword", "type": "string", "required": true, "validation": "Minimum 6 characters.", "example": "adminPass123" }
+        ]
+      },
+      "responses": {
+        "201": {
+          "success": true,
+          "data": {
+            "organization": { "id": "org-8888-uuid", "name": "Prime Wheels Enterprise" },
+            "admin": { "id": "u-8888-uuid", "phone": "8888888888" }
+          }
+        }
+      }
+    },
+    {
+      "id": "superadmin-get-organization-by-id",
+      "group": "Super Admin - Organizations",
+      "method": "GET",
+      "path": "/api/v1/super-admin/organizations/:id",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "superadmin-update-organization",
+      "group": "Super Admin - Organizations",
+      "method": "PATCH",
+      "path": "/api/v1/super-admin/organizations/:id",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "requestBody": {
+        "required": true,
+        "fields": [
+          { "name": "name", "type": "string", "required": false },
+          { "name": "phone", "type": "string", "required": false },
+          { "name": "email", "type": "string", "required": false },
+          { "name": "address", "type": "string", "required": false },
+          { "name": "isActive", "type": "integer", "required": false, "validation": "0 or 1" }
+        ]
+      },
+      "responses": { "200": { "success": true, "data": {} } }
+    },
+    {
+      "id": "superadmin-deactivate-organization",
+      "group": "Super Admin - Organizations",
+      "method": "DELETE",
+      "path": "/api/v1/super-admin/organizations/:id",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "pathParams": [{ "name": "id", "type": "string", "required": true }],
+      "responses": { "200": { "success": true, "message": "Organization deactivated successfully" } }
+    },
+    {
+      "id": "superadmin-list-business-admins",
+      "group": "Super Admin - Business Admins",
+      "method": "GET",
+      "path": "/api/v1/super-admin/business-admins",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "queryParams": [{ "name": "organizationId", "type": "string", "required": false }],
+      "responses": { "200": { "success": true, "data": [] } }
+    },
+    {
+      "id": "superadmin-create-business-admin",
+      "group": "Super Admin - Business Admins",
+      "method": "POST",
+      "path": "/api/v1/super-admin/business-admins",
+      "auth": { "required": true, "roles": ["SUPER_ADMIN"] },
+      "requestBody": {
+        "required": true,
+        "fields": [
+          { "name": "organizationId", "type": "string", "required": true },
+          { "name": "phone", "type": "string", "required": true, "validation": "10 digits string." },
+          { "name": "password", "type": "string", "required": true, "validation": "Min 6 chars." },
+          { "name": "fullName", "type": "string", "required": true }
+        ]
+      },
+      "responses": { "201": { "success": true, "data": {} } }
+    }
+  ]
+}

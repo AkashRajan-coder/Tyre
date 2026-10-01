@@ -22,4 +22,11 @@ router.put(
   DailyReportController.updateDailyReport
 );
 
+// Employee / Admin → get daily reports
+router.get(
+  "/",
+  requireAuth,
+  DailyReportController.getDailyReports
+);
+
 module.exports = router;

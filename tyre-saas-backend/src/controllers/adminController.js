@@ -1,4 +1,40 @@
-const { getOne, query, execute, uuid } = require("../config/db");
+The Node.js / Express 5 / CommonJS "tyre-saas-backend" is deployed on Render(Neon PostgreSQL in production) and consumed by a Flutter app(roles ADMIN and EMPLOYEE only).I will NOT run it locally.I will push to git and Render will deploy it, so everything must work on a fresh Render deploy with no manual shell steps.The earlier audit fixes(missing tables, db.js placeholder bugs, etc.) are done or being done separately.Do not undo them.This task fixes the contract mismatches between the Flutter app and this backend.
+
+Read the relevant files fully before editing.If the real code differs from my description, follow the real code and tell me.Keep the response envelope { success: true, data: ... } for every endpoint.Keep all queries multi - tenant safe(scope by organization_id; employees also need an active user_shops mapping for the shop).Use "?" placeholders through the existing db helpers.
+
+  A.Missing routes(the Flutter app currently gets 404 on these)
+1. GET / api / v1 / admin / shops /: id in src / routes / adminRoutes.js, with AdminController.getShopById.Return one shop with the same fields as the list endpoint.Return 404 if it is not in the admin's organization or is soft-deleted. Same behavior for super admin via ?organizationId.
+2. GET / api / v1 / admin / users /:id with AdminController.getUserById.Return the user without password_hash, include assigned shops, scope to the organization, and return 404 otherwise.
+3. GET / api / v1 / employee / tyre - sizes and GET / api / v1 / employee / tyre - brands in src / routes / employeeRoutes.js.Read - only, limited to the employee's own organization, active records only. Reuse the existing admin list logic through a shared function, but do not expose any admin write routes to employees. Also check whether employees need GET /employee/tyre-products or car brands/models, and confirm the car-brands and car-models employee routes already exist and work.
+4. GET / api / v1 / daily - reports with DailyReportController.getDailyReports(requireAuth plus the existing employee / admin role rules).Supports ? shopId =, ? from = YYYY - MM - DD, ? to = YYYY - MM - DD, ? limit and ? offset.An employee only sees shops they are mapped to.An admin sees shops in their organization.Make sure this router sits under the apiLimiter(it should already, after the earlier audit fix).
+
+  B.Enquiry creation contract(POST / api / v1 / employee / enquiries, employeeController.createEnquiry)
+The Flutter app sends estimatedBudget(not amount), and sends tyreSize and tyreBrand as text (not tyreSizeId and tyreBrandId). The new Flutter version will send both the IDs and the text.Make the backend accept BOTH, so old and new app versions work:
+- amount = req.body.amount ?? req.body.estimatedBudget.Do not reject 0(use a null check, not a falsy check).Reject only if both are missing or negative.Store it in amount and estimated_budget.
+- If tyreSizeId is given, validate it belongs to the organization.Otherwise, if the tyreSize text is given, store it in the tyre_size text column, and best - effort match it to an existing tyre_sizes row(case -insensitive, whitespace - insensitive) to fill tyre_size_id.Do the same for tyreBrandId, tyreBrand text and tyre_brands.Throw 400 only if neither the id nor the text is provided.
+- Keep every other existing validation, the duplicate - phone check, and the enquiry_logs audit entry.
+- Apply the same tolerance to the update - enquiry endpoint if it has the same mandatory fields.
+
+  C.Tyre product update(PATCH / api / v1 / admin / tyre - products /: id, TyreProductController.updateTyreProduct)
+    - Make it a real partial update.Only validate and update the fields present in the body(tyreSizeId, tyreBrandId, vehicleType, productName, price, isActive).Updating only { price } must work.
+- Make sure tyre_products has price NUMERIC(10, 2) in both the SQLite and Postgres DDL and in an idempotent migration.If the column is missing in an existing database, add it with ALTER TABLE ... ADD COLUMN IF NOT EXISTS(use a SQLite - safe guarded approach for SQLite).
+- Return the updated product.
+
+  D.Render readiness
+1. index.js must listen on process.env.PORT(Render injects it) and bind to 0.0.0.0.The 5000 default is for development only.
+2. Migrations must run automatically and idempotently on server startup(CREATE TABLE IF NOT EXISTS plus guarded ALTER TABLE) for Postgres, because I have no shell on Render.Log what ran.If migrations fail in production, exit with a clear error.
+3. Add GET / health(no auth, outside the rate limiter, returns { success: true, status: "ok" }) so Render health checks and the Flutter app can wake the service.
+4. Production must use DATABASE_URL(Neon, SSL).Do not fall back to SQLite in production, and fail with a clear message if DATABASE_URL is missing.Do not write any data files to the local disk in production(Render's disk is ephemeral).
+5. Add`"start": "node index.js"` and an`engines.node` field in package.json if they are missing.Create or update.env.example and README with the Render environment variables: DATABASE_URL, JWT_SECRET, CORS_ORIGIN, NODE_ENV = production.
+6. CORS: the Flutter mobile app does not send an Origin header, so CORS restrictions must not break native requests(requests with no Origin must be allowed). Browser origins stay restricted to CORS_ORIGIN.
+7. Set app.set('trust proxy', 1) so the rate limiter sees the real client IP behind Render's proxy.
+
+E.Verification(no localhost needed)
+  - Add or extend supertest tests(SQLite or in -memory DB) for every new or changed endpoint: shops /: id, users /: id, employee tyre lists, GET daily - reports, createEnquiry with the old payload(estimatedBudget plus tyreSize text), createEnquiry with the new payload(amount plus IDs), PATCH tyre - product with only price, GET / health.Also test the tenant isolation and role rules(an employee cannot call admin routes, an admin cannot read another organization).
+- Run`npm test` and show the output.
+- Update the Swagger docs for all new or changed endpoints.
+
+Final deliverable: files changed, the new endpoint list with example request and response JSON, the migration SQL that runs on startup, the Render environment variable checklist, and any risks I should check after deploying.const { getOne, query, execute, uuid } = require("../config/db");
 const { hashPassword } = require("../utils/password");
 const { AppError } = require("../middlewares/error");
 
@@ -11,52 +47,52 @@ function getOrgScope(req) {
 }
 
 class AdminController {
-static async getDashboard(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  static async getDashboard(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    // ============================================================
-    // Active Shops
-    // shops.is_active = SMALLINT
-    // ============================================================
+      // ============================================================
+      // Active Shops
+      // shops.is_active = SMALLINT
+      // ============================================================
 
-    let shopSql = `
+      let shopSql = `
       SELECT id, name
       FROM shops
       WHERE is_active = 1
     `;
 
-    const shopParams = [];
+      const shopParams = [];
 
-    if (orgId) {
-      shopSql += " AND organization_id = ?";
-      shopParams.push(orgId);
-    }
+      if (orgId) {
+        shopSql += " AND organization_id = ?";
+        shopParams.push(orgId);
+      }
 
-    shopSql += " ORDER BY name ASC";
+      shopSql += " ORDER BY name ASC";
 
-    const shops = await query(shopSql, shopParams);
+      const shops = await query(shopSql, shopParams);
 
-    // ============================================================
-    // Overall Counters
-    // ============================================================
+      // ============================================================
+      // Overall Counters
+      // ============================================================
 
-    let totalEnquiries = 0;
-    let pendingEnquiries = 0;
-    let completedEnquiries = 0;
-    let dueToday = 0;
-    let overdue = 0;
+      let totalEnquiries = 0;
+      let pendingEnquiries = 0;
+      let completedEnquiries = 0;
+      let dueToday = 0;
+      let overdue = 0;
 
-    const today = new Date().toISOString().split("T")[0];
+      const today = new Date().toISOString().split("T")[0];
 
-    const shopMetrics = [];
+      const shopMetrics = [];
 
-    // ============================================================
-    // Shop-wise Enquiry Metrics
-    // ============================================================
+      // ============================================================
+      // Shop-wise Enquiry Metrics
+      // ============================================================
 
-    for (const shop of shops) {
-      let enquirySql = `
+      for (const shop of shops) {
+        let enquirySql = `
         SELECT
           COUNT(*) AS total,
 
@@ -100,119 +136,119 @@ static async getDashboard(req, res, next) {
           AND is_deleted = 0
       `;
 
-      const enquiryParams = [
-        today,
-        today,
-        shop.id,
-      ];
+        const enquiryParams = [
+          today,
+          today,
+          shop.id,
+        ];
 
-      if (orgId) {
-        enquirySql += " AND organization_id = ?";
-        enquiryParams.push(orgId);
+        if (orgId) {
+          enquirySql += " AND organization_id = ?";
+          enquiryParams.push(orgId);
+        }
+
+        const metrics = await getOne(
+          enquirySql,
+          enquiryParams
+        );
+
+        const total = Number(metrics?.total || 0);
+        const pending = Number(metrics?.pending || 0);
+        const completed = Number(metrics?.completed || 0);
+        const shopDueToday = Number(metrics?.duetoday || 0);
+        const shopOverdue = Number(metrics?.overdue || 0);
+
+        totalEnquiries += total;
+        pendingEnquiries += pending;
+        completedEnquiries += completed;
+        dueToday += shopDueToday;
+        overdue += shopOverdue;
+
+        // ==========================================================
+        // Shop Conversion Rate
+        // ==========================================================
+
+        const conversionRate =
+          total > 0
+            ? Number(((completed / total) * 100).toFixed(2))
+            : 0;
+
+        shopMetrics.push({
+          shopId: shop.id,
+          shopName: shop.name,
+          totalEnquiries: total,
+          pendingEnquiries: pending,
+          completedEnquiries: completed,
+          dueToday: shopDueToday,
+          overdue: shopOverdue,
+          conversionRate,
+        });
       }
 
-      const metrics = await getOne(
-        enquirySql,
-        enquiryParams
-      );
+      // ============================================================
+      // Active Users
+      // users.is_active = SMALLINT
+      // ============================================================
 
-      const total = Number(metrics?.total || 0);
-      const pending = Number(metrics?.pending || 0);
-      const completed = Number(metrics?.completed || 0);
-      const shopDueToday = Number(metrics?.duetoday || 0);
-      const shopOverdue = Number(metrics?.overdue || 0);
-
-      totalEnquiries += total;
-      pendingEnquiries += pending;
-      completedEnquiries += completed;
-      dueToday += shopDueToday;
-      overdue += shopOverdue;
-
-      // ==========================================================
-      // Shop Conversion Rate
-      // ==========================================================
-
-      const conversionRate =
-        total > 0
-          ? Number(((completed / total) * 100).toFixed(2))
-          : 0;
-
-      shopMetrics.push({
-        shopId: shop.id,
-        shopName: shop.name,
-        totalEnquiries: total,
-        pendingEnquiries: pending,
-        completedEnquiries: completed,
-        dueToday: shopDueToday,
-        overdue: shopOverdue,
-        conversionRate,
-      });
-    }
-
-    // ============================================================
-    // Active Users
-    // users.is_active = SMALLINT
-    // ============================================================
-
-    let activeUsersSql = `
+      let activeUsersSql = `
       SELECT COUNT(*) AS count
       FROM users
       WHERE role != 'SUPER_ADMIN'
         AND is_active = 1
     `;
 
-    const activeUsersParams = [];
+      const activeUsersParams = [];
 
-    if (orgId) {
-      activeUsersSql += " AND organization_id = ?";
-      activeUsersParams.push(orgId);
-    }
+      if (orgId) {
+        activeUsersSql += " AND organization_id = ?";
+        activeUsersParams.push(orgId);
+      }
 
-    const activeUsersResult = await getOne(
-      activeUsersSql,
-      activeUsersParams
-    );
+      const activeUsersResult = await getOne(
+        activeUsersSql,
+        activeUsersParams
+      );
 
-    const activeUsers = Number(
-      activeUsersResult?.count || 0
-    );
+      const activeUsers = Number(
+        activeUsersResult?.count || 0
+      );
 
-    // ============================================================
-    // Overall Conversion Rate
-    // ============================================================
+      // ============================================================
+      // Overall Conversion Rate
+      // ============================================================
 
-    const conversionRate =
-      totalEnquiries > 0
-        ? Number(
+      const conversionRate =
+        totalEnquiries > 0
+          ? Number(
             (
               (completedEnquiries / totalEnquiries) *
               100
             ).toFixed(2)
           )
-        : 0;
+          : 0;
 
-    // ============================================================
-    // Final Dashboard Response
-    // ============================================================
+      // ============================================================
+      // Final Dashboard Response
+      // ============================================================
 
-    res.json({
-      success: true,
-      data: {
-        totalEnquiries,
-        pendingEnquiries,
-        completedEnquiries,
-        dueToday,
-        overdue,
-        conversionRate,
-        activeShops: shops.length,
-        activeUsers,
-        shops: shopMetrics,
-      },
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        success: true,
+        data: {
+          totalEnquiries,
+          pendingEnquiries,
+          completedEnquiries,
+          dueToday,
+          overdue,
+          conversionRate,
+          activeShops: shops.length,
+          activeUsers,
+          shops: shopMetrics,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-}
   // ============================================================
   // GET ALL ENQUIRIES
   // ============================================================
@@ -329,43 +365,43 @@ static async getDashboard(req, res, next) {
   // ONLY EMPLOYEE FROM SAME SHOP
   // ============================================================
 
-static async reassignEnquiry(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
-    const { assignedToUserId, remarks } = req.body;
+  static async reassignEnquiry(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
+      const { assignedToUserId, remarks } = req.body;
 
-    if (!assignedToUserId) {
-      throw new AppError("assignedToUserId is required", 400);
-    }
+      if (!assignedToUserId) {
+        throw new AppError("assignedToUserId is required", 400);
+      }
 
-    let enquirySql = `
+      let enquirySql = `
       SELECT *
       FROM customer_enquiries
       WHERE id = ?
         AND is_deleted = 0
     `;
 
-    const enquiryParams = [id];
+      const enquiryParams = [id];
 
-    if (orgId) {
-      enquirySql += ` AND organization_id = ?`;
-      enquiryParams.push(orgId);
-    }
+      if (orgId) {
+        enquirySql += ` AND organization_id = ?`;
+        enquiryParams.push(orgId);
+      }
 
-    const enquiry = await getOne(
-      enquirySql,
-      enquiryParams
-    );
-
-    if (!enquiry) {
-      throw new AppError(
-        "Enquiry not found or access denied",
-        404
+      const enquiry = await getOne(
+        enquirySql,
+        enquiryParams
       );
-    }
 
-    let targetSql = `
+      if (!enquiry) {
+        throw new AppError(
+          "Enquiry not found or access denied",
+          404
+        );
+      }
+
+      let targetSql = `
       SELECT
         u.id,
         u.full_name
@@ -383,31 +419,31 @@ static async reassignEnquiry(req, res, next) {
         AND s.is_deleted = FALSE
     `;
 
-    const targetParams = [
-      assignedToUserId,
-      enquiry.shop_id,
-    ];
+      const targetParams = [
+        assignedToUserId,
+        enquiry.shop_id,
+      ];
 
-    if (orgId) {
-      targetSql += ` AND u.organization_id = ?`;
-      targetParams.push(orgId);
-    }
+      if (orgId) {
+        targetSql += ` AND u.organization_id = ?`;
+        targetParams.push(orgId);
+      }
 
-    const targetUser = await getOne(
-      targetSql,
-      targetParams
-    );
-
-    if (!targetUser) {
-      throw new AppError(
-        "Target employee is not active or is not assigned to this shop",
-        400
+      const targetUser = await getOne(
+        targetSql,
+        targetParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!targetUser) {
+        throw new AppError(
+          "Target employee is not active or is not assigned to this shop",
+          400
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE customer_enquiries
       SET
         assigned_to_user_id = ?,
@@ -417,22 +453,22 @@ static async reassignEnquiry(req, res, next) {
         AND is_deleted = 0
     `;
 
-    const updateParams = [
-      assignedToUserId,
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        assignedToUserId,
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
-    }
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
 
-    await execute(updateSql, updateParams);
+      await execute(updateSql, updateParams);
 
-    await execute(
-      `
+      await execute(
+        `
       INSERT INTO enquiry_logs (
         id,
         enquiry_id,
@@ -444,67 +480,67 @@ static async reassignEnquiry(req, res, next) {
       )
       VALUES (?, ?, 'REASSIGNED', ?, ?, ?, ?)
       `,
-      [
-        uuid(),
-        id,
-        `Reassigned to: ${targetUser.full_name}`,
-        remarks || "Reassigned by Admin",
-        req.user.id,
-        now,
-      ]
-    );
+        [
+          uuid(),
+          id,
+          `Reassigned to: ${targetUser.full_name}`,
+          remarks || "Reassigned by Admin",
+          req.user.id,
+          now,
+        ]
+      );
 
-    res.json({
-      success: true,
-      message: "Enquiry reassigned successfully",
-    });
+      res.json({
+        success: true,
+        message: "Enquiry reassigned successfully",
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // SOFT DELETE ENQUIRY
   // ============================================================
 
-static async softDeleteEnquiry(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async softDeleteEnquiry(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT id
       FROM customer_enquiries
       WHERE id = ?
         AND is_deleted = 0
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const enquiry = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!enquiry) {
-      throw new AppError(
-        "Enquiry not found or access denied",
-        404
+      const enquiry = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!enquiry) {
+        throw new AppError(
+          "Enquiry not found or access denied",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE customer_enquiries
       SET
         is_deleted = 1,
@@ -513,21 +549,21 @@ static async softDeleteEnquiry(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
-    }
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
 
-    await execute(updateSql, updateParams);
+      await execute(updateSql, updateParams);
 
-    await execute(
-      `
+      await execute(
+        `
         INSERT INTO enquiry_logs
         (
           id,
@@ -547,24 +583,24 @@ static async softDeleteEnquiry(req, res, next) {
           ?
         )
       `,
-      [
-        uuid(),
-        id,
-        "Enquiry soft deleted by Admin",
-        req.user.id,
-        now,
-      ]
-    );
+        [
+          uuid(),
+          id,
+          "Enquiry soft deleted by Admin",
+          req.user.id,
+          now,
+        ]
+      );
 
-    res.json({
-      success: true,
-      message: "Enquiry deleted successfully",
-    });
+      res.json({
+        success: true,
+        message: "Enquiry deleted successfully",
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // LIST SHOPS
@@ -572,75 +608,112 @@ static async softDeleteEnquiry(req, res, next) {
   // SOFT DELETED HIDDEN
   // ============================================================
 
- static async listShops(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  static async listShops(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    let sql = `
+      let sql = `
       SELECT *
       FROM shops
       WHERE is_deleted = FALSE
     `;
 
-    const params = [];
+      const params = [];
 
-    if (orgId) {
-      sql += `
+      if (orgId) {
+        sql += `
         AND organization_id = ?
       `;
 
-      params.push(orgId);
-    }
+        params.push(orgId);
+      }
 
-    sql += `
+      sql += `
       ORDER BY name ASC
     `;
 
-    const shops = await query(
-      sql,
-      params
-    );
+      const shops = await query(
+        sql,
+        params
+      );
 
-    res.json({
-      success: true,
-      data: shops,
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        success: true,
+        data: shops,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-}
+
+  // ============================================================
+  // GET SHOP BY ID
+  // ============================================================
+
+  static async getShopById(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
+
+      let sql = `
+      SELECT *
+      FROM shops
+      WHERE id = ?
+        AND (is_deleted = 0 OR is_deleted = FALSE OR is_deleted IS NULL)
+    `;
+      const params = [id];
+
+      if (orgId) {
+        sql += ` AND organization_id = ?`;
+        params.push(orgId);
+      }
+
+      const shop = await getOne(sql, params);
+
+      if (!shop) {
+        throw new AppError("Shop not found or access denied", 404);
+      }
+
+      res.json({
+        success: true,
+        data: shop,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 
   // ============================================================
   // CREATE SHOP
   // ============================================================
 
-static async createShop(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  static async createShop(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    if (!orgId) {
-      throw new AppError(
-        "organizationId is required",
-        400
-      );
-    }
+      if (!orgId) {
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
+      }
 
-    const {
-      name,
-      address,
-      phone,
-      gstNumber,
-    } = req.body;
+      const {
+        name,
+        address,
+        phone,
+        gstNumber,
+      } = req.body;
 
-    if (!name) {
-      throw new AppError(
-        "Shop name is required",
-        400
-      );
-    }
+      if (!name) {
+        throw new AppError(
+          "Shop name is required",
+          400
+        );
+      }
 
-    const existingShop = await getOne(
-      `
+      const existingShop = await getOne(
+        `
         SELECT id
         FROM shops
         WHERE organization_id = ?
@@ -648,21 +721,21 @@ static async createShop(req, res, next) {
           AND is_deleted = false
         LIMIT 1
       `,
-      [orgId, name]
-    );
-
-    if (existingShop) {
-      throw new AppError(
-        "A shop with this name already exists in this organization",
-        409
+        [orgId, name]
       );
-    }
 
-    const id = uuid();
-    const now = new Date().toISOString();
+      if (existingShop) {
+        throw new AppError(
+          "A shop with this name already exists in this organization",
+          409
+        );
+      }
 
-    await execute(
-      `
+      const id = uuid();
+      const now = new Date().toISOString();
+
+      await execute(
+        `
         INSERT INTO shops
         (
           id,
@@ -694,88 +767,88 @@ static async createShop(req, res, next) {
           ?
         )
       `,
-      [
-        id,
-        orgId,
-        name,
-        address || null,
-        phone || null,
-        gstNumber || null,
-        now,
-        req.user.id,
-        now,
-        req.user.id,
-      ]
-    );
+        [
+          id,
+          orgId,
+          name,
+          address || null,
+          phone || null,
+          gstNumber || null,
+          now,
+          req.user.id,
+          now,
+          req.user.id,
+        ]
+      );
 
-    const shop = await getOne(
-      `
+      const shop = await getOne(
+        `
         SELECT *
         FROM shops
         WHERE id = ?
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.status(201).json({
-      success: true,
-      message: "Shop created successfully",
-      data: shop,
-    });
+      res.status(201).json({
+        success: true,
+        message: "Shop created successfully",
+        data: shop,
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // UPDATE SHOP
   // ============================================================
-static async updateShop(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async updateShop(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    const {
-      name,
-      address,
-      phone,
-      gstNumber,
-      isActive,
-    } = req.body;
+      const {
+        name,
+        address,
+        phone,
+        gstNumber,
+        isActive,
+      } = req.body;
 
-    let checkSql = `
+      let checkSql = `
       SELECT *
       FROM shops
       WHERE id = ?
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const shop = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!shop) {
-      throw new AppError(
-        "Shop not found or already deleted",
-        404
+      const shop = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!shop) {
+        throw new AppError(
+          "Shop not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE shops
       SET
         name = ?,
@@ -789,64 +862,64 @@ static async updateShop(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      name ?? shop.name,
-      address ?? shop.address,
-      phone ?? shop.phone,
-      gstNumber ?? shop.gst_number,
+      const updateParams = [
+        name ?? shop.name,
+        address ?? shop.address,
+        phone ?? shop.phone,
+        gstNumber ?? shop.gst_number,
 
-      typeof isActive === "boolean"
-        ? (isActive ? 1 : 0)
-        : shop.is_active,
+        typeof isActive === "boolean"
+          ? (isActive ? 1 : 0)
+          : shop.is_active,
 
-      now,
-      req.user.id,
-      id,
-    ];
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
-    }
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
 
-    await execute(
-      updateSql,
-      updateParams
-    );
+      await execute(
+        updateSql,
+        updateParams
+      );
 
-    const updatedShop = await getOne(
-      `
+      const updatedShop = await getOne(
+        `
         SELECT *
         FROM shops
         WHERE id = ?
           AND is_deleted = FALSE
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.json({
-      success: true,
-      message: "Shop updated successfully",
-      data: updatedShop,
-    });
+      res.json({
+        success: true,
+        message: "Shop updated successfully",
+        data: updatedShop,
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
-// ============================================================
-// DEACTIVATE SHOP
-// Keeps shop visible
-// is_active = 0
-// is_deleted = FALSE
-// ============================================================
+  // ============================================================
+  // DEACTIVATE SHOP
+  // Keeps shop visible
+  // is_active = 0
+  // is_deleted = FALSE
+  // ============================================================
 
-static async deactivateShop(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async deactivateShop(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT
         id,
         is_active,
@@ -856,31 +929,31 @@ static async deactivateShop(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const shop = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!shop) {
-      throw new AppError(
-        "Shop not found or already deleted",
-        404
+      const shop = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!shop) {
+        throw new AppError(
+          "Shop not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE shops
       SET
         is_active = 0,
@@ -890,72 +963,72 @@ static async deactivateShop(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Shop deactivated successfully.",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Shop deactivated successfully.",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
   // ============================================================
   // SOFT DELETE SHOP
   // ============================================================
 
-static async softDeleteShop(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async softDeleteShop(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT id
       FROM shops
       WHERE id = ?
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const shop = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!shop) {
-      throw new AppError(
-        "Shop not found or already deleted",
-        404
+      const shop = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!shop) {
+        throw new AppError(
+          "Shop not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE shops
       SET
         is_active = 0,
@@ -965,31 +1038,31 @@ static async softDeleteShop(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Shop soft-deleted successfully",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Shop soft-deleted successfully",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
   // ============================================================
   // LIST USERS
@@ -1002,12 +1075,12 @@ static async softDeleteShop(req, res, next) {
   // Only active employees assigned to that shop
   // ============================================================
 
-static async listUsers(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { shopId } = req.query;
+  static async listUsers(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { shopId } = req.query;
 
-    let sql = `
+      let sql = `
       SELECT
         id,
         organization_id,
@@ -1023,28 +1096,28 @@ static async listUsers(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const params = [];
+      const params = [];
 
-    // --------------------------------------------------------
-    // Organization isolation
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Organization isolation
+      // --------------------------------------------------------
 
-    if (orgId) {
-      sql += `
+      if (orgId) {
+        sql += `
         AND organization_id = ?
       `;
 
-      params.push(orgId);
-    }
+        params.push(orgId);
+      }
 
-    // --------------------------------------------------------
-    // Reassign employee list
-    // If shopId is provided, return only employees
-    // assigned to that shop
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Reassign employee list
+      // If shopId is provided, return only employees
+      // assigned to that shop
+      // --------------------------------------------------------
 
-    if (shopId) {
-      sql += `
+      if (shopId) {
+        sql += `
         AND role = 'EMPLOYEE'
         AND is_active = 1
 
@@ -1062,24 +1135,24 @@ static async listUsers(req, res, next) {
         )
       `;
 
-      params.push(shopId);
-    }
+        params.push(shopId);
+      }
 
-    sql += `
+      sql += `
       ORDER BY full_name ASC
     `;
 
-    const users = await query(sql, params);
+      const users = await query(sql, params);
 
-    // --------------------------------------------------------
-    // Attach assigned shops
-    // Active + deactivated shops are shown
-    // Soft-deleted shops are hidden
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Attach assigned shops
+      // Active + deactivated shops are shown
+      // Soft-deleted shops are hidden
+      // --------------------------------------------------------
 
-    for (const user of users) {
-      const shops = await query(
-        `
+      for (const user of users) {
+        const shops = await query(
+          `
           SELECT
             s.id,
             s.name,
@@ -1096,95 +1169,169 @@ static async listUsers(req, res, next) {
 
           ORDER BY s.name ASC
         `,
+          [user.id]
+        );
+
+        user.shops = shops;
+      }
+
+      res.json({
+        success: true,
+        data: users,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ============================================================
+  // GET USER BY ID
+  // ============================================================
+
+  static async getUserById(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
+
+      let sql = `
+      SELECT
+        id,
+        organization_id,
+        phone,
+        full_name,
+        role,
+        is_active,
+        is_deleted,
+        created_at,
+        created_by,
+        last_modified_at,
+        last_modified_by
+      FROM users
+      WHERE id = ?
+        AND (is_deleted = 0 OR is_deleted = FALSE OR is_deleted IS NULL)
+    `;
+      const params = [id];
+
+      if (orgId) {
+        sql += ` AND organization_id = ?`;
+        params.push(orgId);
+      }
+
+      const user = await getOne(sql, params);
+
+      if (!user) {
+        throw new AppError("User not found or access denied", 404);
+      }
+
+      // Attach assigned shops
+      const shops = await query(
+        `
+        SELECT
+          s.id,
+          s.name,
+          s.code,
+          s.address,
+          s.phone,
+          s.is_active,
+          s.is_deleted
+        FROM shops s
+        INNER JOIN user_shops us
+          ON us.shop_id = s.id
+        WHERE us.user_id = ?
+          AND (s.is_deleted = 0 OR s.is_deleted = FALSE OR s.is_deleted IS NULL)
+        ORDER BY s.name ASC
+      `,
         [user.id]
       );
 
       user.shops = shops;
-    }
+      user.assignedShops = shops;
+      user.assignedShopIds = shops.map((s) => s.id);
+      user.shopIds = shops.map((s) => s.id);
 
-    res.json({
-      success: true,
-      data: users,
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        success: true,
+        data: user,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // CREATE USER
   // ============================================================
 
-static async createUser(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  static async createUser(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    if (!orgId) {
-      throw new AppError(
-        "organizationId is required",
-        400
-      );
-    }
+      if (!orgId) {
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
+      }
 
-    const {
-      phone,
-      fullName,
-      role,
-      password,
-      shopIds = [],
-    } = req.body;
+      const {
+        phone,
+        fullName,
+        role,
+        password,
+        shopIds = [],
+      } = req.body;
 
-    if (
-      !phone ||
-      !fullName ||
-      !role ||
-      !password
-    ) {
-      throw new AppError(
-        "phone, fullName, role and password are required",
-        400
-      );
-    }
+      if (
+        !phone ||
+        !fullName ||
+        !role ||
+        !password
+      ) {
+        throw new AppError(
+          "phone, fullName, role and password are required",
+          400
+        );
+      }
 
-    if (!["ADMIN", "EMPLOYEE"].includes(role)) {
-      throw new AppError(
-        "Only ADMIN and EMPLOYEE users can be created here",
-        400
-      );
-    }
+      if (!["ADMIN", "EMPLOYEE"].includes(role)) {
+        throw new AppError(
+          "Only ADMIN and EMPLOYEE users can be created here",
+          400
+        );
+      }
 
-    // --------------------------------------------------------
-    // Check existing user
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Check existing user
+      // --------------------------------------------------------
 
-    const existingUser = await getOne(
-      `
+      const existingUser = await getOne(
+        `
         SELECT id
         FROM users
         WHERE phone = ?
           AND is_deleted = FALSE
       `,
-      [phone]
-    );
-
-    if (existingUser) {
-      throw new AppError(
-        "User with this phone already exists",
-        409
+        [phone]
       );
-    }
 
-    // --------------------------------------------------------
-    // Create user
-    // --------------------------------------------------------
+      if (existingUser) {
+        throw new AppError(
+          "User with this phone already exists",
+          409
+        );
+      }
 
-    const id = uuid();
-    const now = new Date().toISOString();
+      // --------------------------------------------------------
+      // Create user
+      // --------------------------------------------------------
 
-    const hashedPassword = await hashPassword(password);
+      const id = uuid();
+      const now = new Date().toISOString();
 
-    await execute(
-      `
+      const hashedPassword = await hashPassword(password);
+
+      await execute(
+        `
         INSERT INTO users
         (
           id,
@@ -1214,47 +1361,47 @@ static async createUser(req, res, next) {
           ?
         )
       `,
-      [
-        id,
-        orgId,
-        phone,
-        fullName,
-        role,
-        hashedPassword,
-        now,
-        now,
-        req.user.id,
-      ]
-    );
+        [
+          id,
+          orgId,
+          phone,
+          fullName,
+          role,
+          hashedPassword,
+          now,
+          now,
+          req.user.id,
+        ]
+      );
 
-    // --------------------------------------------------------
-    // Assign shops
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Assign shops
+      // --------------------------------------------------------
 
-    if (Array.isArray(shopIds)) {
-      for (const shopId of shopIds) {
+      if (Array.isArray(shopIds)) {
+        for (const shopId of shopIds) {
 
-        const shop = await getOne(
-          `
+          const shop = await getOne(
+            `
             SELECT id
             FROM shops
             WHERE id = ?
               AND organization_id = ?
               AND is_deleted = FALSE
           `,
-          [
-            shopId,
-            orgId,
-          ]
-        );
+            [
+              shopId,
+              orgId,
+            ]
+          );
 
-        if (!shop) {
-          continue;
-        }
+          if (!shop) {
+            continue;
+          }
 
-        // Create employee/admin -> shop relationship
-        await execute(
-          `
+          // Create employee/admin -> shop relationship
+          await execute(
+            `
             INSERT INTO user_shops
             (
               id,
@@ -1272,23 +1419,23 @@ static async createUser(req, res, next) {
               ?
             )
           `,
-          [
-            uuid(),
-            id,
-            shopId,
-            now,
-            req.user.id,
-          ]
-        );
+            [
+              uuid(),
+              id,
+              shopId,
+              now,
+              req.user.id,
+            ]
+          );
+        }
       }
-    }
 
-    // --------------------------------------------------------
-    // Get created user
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Get created user
+      // --------------------------------------------------------
 
-    const user = await getOne(
-      `
+      const user = await getOne(
+        `
         SELECT
           id,
           organization_id,
@@ -1304,38 +1451,38 @@ static async createUser(req, res, next) {
 
         WHERE id = ?
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.status(201).json({
-      success: true,
-      message: "User created successfully",
-      data: user,
-    });
+      res.status(201).json({
+        success: true,
+        message: "User created successfully",
+        data: user,
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // UPDATE USER
   // ============================================================
 
-static async updateUser(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async updateUser(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    const {
-      phone,
-      fullName,
-      role,
-      isActive,
-      shopIds,
-    } = req.body;
+      const {
+        phone,
+        fullName,
+        role,
+        isActive,
+        shopIds,
+      } = req.body;
 
-    let checkSql = `
+      let checkSql = `
       SELECT *
       FROM users
       WHERE id = ?
@@ -1343,41 +1490,41 @@ static async updateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const user = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!user) {
-      throw new AppError(
-        "User not found or already deleted",
-        404
+      const user = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    if (
-      role !== undefined &&
-      !["ADMIN", "EMPLOYEE"].includes(role)
-    ) {
-      throw new AppError(
-        "Only ADMIN and EMPLOYEE roles are allowed",
-        400
-      );
-    }
+      if (!user) {
+        throw new AppError(
+          "User not found or already deleted",
+          404
+        );
+      }
 
-    const now = new Date().toISOString();
+      if (
+        role !== undefined &&
+        !["ADMIN", "EMPLOYEE"].includes(role)
+      ) {
+        throw new AppError(
+          "Only ADMIN and EMPLOYEE roles are allowed",
+          400
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE users
       SET
         phone = ?,
@@ -1390,60 +1537,60 @@ static async updateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      phone ?? user.phone,
-      fullName ?? user.full_name,
-      role ?? user.role,
+      const updateParams = [
+        phone ?? user.phone,
+        fullName ?? user.full_name,
+        role ?? user.role,
 
-      typeof isActive === "boolean"
-        ? (isActive ? 1 : 0)
-        : user.is_active,
+        typeof isActive === "boolean"
+          ? (isActive ? 1 : 0)
+          : user.is_active,
 
-      now,
-      req.user.id,
-      id,
-    ];
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
-    }
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
 
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    if (Array.isArray(shopIds)) {
       await execute(
-        `
+        updateSql,
+        updateParams
+      );
+
+      if (Array.isArray(shopIds)) {
+        await execute(
+          `
           DELETE FROM user_shops
           WHERE user_id = ?
         `,
-        [id]
-      );
+          [id]
+        );
 
-      for (const shopId of shopIds) {
-        const shop = await getOne(
-          `
+        for (const shopId of shopIds) {
+          const shop = await getOne(
+            `
             SELECT id
             FROM shops
             WHERE id = ?
               AND organization_id = ?
               AND is_deleted = FALSE
           `,
-          [
-            shopId,
-            orgId,
-          ]
-        );
+            [
+              shopId,
+              orgId,
+            ]
+          );
 
-        if (!shop) {
-          continue;
-        }
+          if (!shop) {
+            continue;
+          }
 
-        await execute(
-          `
+          await execute(
+            `
             INSERT INTO user_shops
             (
               id,
@@ -1457,17 +1604,17 @@ static async updateUser(req, res, next) {
               ?
             )
           `,
-          [
-            uuid(),
-            id,
-            shopId,
-          ]
-        );
+            [
+              uuid(),
+              id,
+              shopId,
+            ]
+          );
+        }
       }
-    }
 
-    const updatedUser = await getOne(
-      `
+      const updatedUser = await getOne(
+        `
         SELECT
           id,
           organization_id,
@@ -1481,38 +1628,38 @@ static async updateUser(req, res, next) {
         FROM users
         WHERE id = ?
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.json({
-      success: true,
-      message: "User updated successfully",
-      data: updatedUser,
-    });
+      res.json({
+        success: true,
+        message: "User updated successfully",
+        data: updatedUser,
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
   // ============================================================
   // RESET PASSWORD
   // ============================================================
 
-static async resetPassword(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
-    const { password } = req.body;
+  static async resetPassword(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
+      const { password } = req.body;
 
-    if (!password) {
-      throw new AppError(
-        "Password is required",
-        400
-      );
-    }
+      if (!password) {
+        throw new AppError(
+          "Password is required",
+          400
+        );
+      }
 
-    let checkSql = `
+      let checkSql = `
       SELECT id
       FROM users
       WHERE id = ?
@@ -1520,34 +1667,34 @@ static async resetPassword(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const user = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!user) {
-      throw new AppError(
-        "User not found or already deleted",
-        404
+      const user = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const hashedPassword =
-      await hashPassword(password);
+      if (!user) {
+        throw new AppError(
+          "User not found or already deleted",
+          404
+        );
+      }
 
-    const now = new Date().toISOString();
+      const hashedPassword =
+        await hashPassword(password);
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE users
       SET
         password_hash = ?,
@@ -1557,43 +1704,43 @@ static async resetPassword(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      hashedPassword,
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        hashedPassword,
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Password reset successfully",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Password reset successfully",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
   // ============================================================
   // SOFT DELETE USER / EMPLOYEE
   // ============================================================
 
-static async softDeleteUser(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async softDeleteUser(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT
         id,
         role,
@@ -1605,31 +1752,31 @@ static async softDeleteUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const user = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!user) {
-      throw new AppError(
-        "User not found or already deleted",
-        404
+      const user = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!user) {
+        throw new AppError(
+          "User not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE users
       SET
         is_active = 0,
@@ -1639,43 +1786,43 @@ static async softDeleteUser(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "User soft-deleted successfully",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "User soft-deleted successfully",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
   // ============================================================
   // DEACTIVATE USER
   // Keeps user visible
   // ============================================================
 
-static async deactivateUser(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async deactivateUser(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT
         id,
         role
@@ -1685,31 +1832,31 @@ static async deactivateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const user = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!user) {
-      throw new AppError(
-        "User not found in your organization",
-        404
+      const user = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!user) {
+        throw new AppError(
+          "User not found in your organization",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE users
       SET
         is_active = 0,
@@ -1719,39 +1866,39 @@ static async deactivateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message:
+          "User deactivated successfully. Login is now blocked.",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message:
-        "User deactivated successfully. Login is now blocked.",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
 
   static async exportCsv(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+    try {
+      const orgId = getOrgScope(req);
 
-    let sql = `
+      let sql = `
       SELECT
         ce.id,
         ce.customer_name,
@@ -1767,85 +1914,85 @@ static async deactivateUser(req, res, next) {
       WHERE ce.is_deleted = 0
     `;
 
-    const params = [];
+      const params = [];
 
-    if (orgId) {
-      sql += " AND ce.organization_id = ?";
-      params.push(orgId);
+      if (orgId) {
+        sql += " AND ce.organization_id = ?";
+        params.push(orgId);
+      }
+
+      sql += " ORDER BY ce.created_at DESC";
+
+      const enquiries = await query(sql, params);
+
+      const headers = [
+        "ID",
+        "Customer Name",
+        "Phone",
+        "Vehicle Number",
+        "Vehicle Model",
+        "Tyre Size",
+        "Budget",
+        "Follow Up",
+        "Status",
+        "Created At",
+      ];
+
+      const escapeCsv = (value) => {
+        if (value === null || value === undefined) {
+          return "";
+        }
+
+        const stringValue = String(value);
+
+        if (
+          stringValue.includes(",") ||
+          stringValue.includes('"') ||
+          stringValue.includes("\n")
+        ) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+
+        return stringValue;
+      };
+
+      const csvRows = enquiries.map((enquiry) =>
+        [
+          enquiry.id,
+          enquiry.customer_name,
+          enquiry.phone,
+          enquiry.vehicle_number,
+          enquiry.vehicle_model,
+          enquiry.tyre_size,
+          enquiry.budget,
+          enquiry.follow_up,
+          enquiry.status,
+          enquiry.created_at,
+        ]
+          .map(escapeCsv)
+          .join(",")
+      );
+
+      const csv = [headers.join(","), ...csvRows].join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="enquiries-${Date.now()}.csv"`
+      );
+
+      res.send(csv);
+    } catch (error) {
+      next(error);
     }
-
-    sql += " ORDER BY ce.created_at DESC";
-
-    const enquiries = await query(sql, params);
-
-    const headers = [
-      "ID",
-      "Customer Name",
-      "Phone",
-      "Vehicle Number",
-      "Vehicle Model",
-      "Tyre Size",
-      "Budget",
-      "Follow Up",
-      "Status",
-      "Created At",
-    ];
-
-    const escapeCsv = (value) => {
-      if (value === null || value === undefined) {
-        return "";
-      }
-
-      const stringValue = String(value);
-
-      if (
-        stringValue.includes(",") ||
-        stringValue.includes('"') ||
-        stringValue.includes("\n")
-      ) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-
-      return stringValue;
-    };
-
-    const csvRows = enquiries.map((enquiry) =>
-      [
-        enquiry.id,
-        enquiry.customer_name,
-        enquiry.phone,
-        enquiry.vehicle_number,
-        enquiry.vehicle_model,
-        enquiry.tyre_size,
-        enquiry.budget,
-        enquiry.follow_up,
-        enquiry.status,
-        enquiry.created_at,
-      ]
-        .map(escapeCsv)
-        .join(",")
-    );
-
-    const csv = [headers.join(","), ...csvRows].join("\n");
-
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="enquiries-${Date.now()}.csv"`
-    );
-
-    res.send(csv);
-  } catch (error) {
-    next(error);
   }
-}
 
-static async activateShop(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async activateShop(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT
         id,
         is_active,
@@ -1855,31 +2002,31 @@ static async activateShop(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const shop = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!shop) {
-      throw new AppError(
-        "Shop not found or already deleted",
-        404
+      const shop = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!shop) {
+        throw new AppError(
+          "Shop not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE shops
       SET
         is_active = 1,
@@ -1889,38 +2036,38 @@ static async activateShop(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Shop activated successfully.",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Shop activated successfully.",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
-static async activateUser(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  static async activateUser(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT
         id,
         role,
@@ -1932,31 +2079,31 @@ static async activateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const user = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!user) {
-      throw new AppError(
-        "User not found or already deleted",
-        404
+      const user = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!user) {
+        throw new AppError(
+          "User not found or already deleted",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE users
       SET
         is_active = 1,
@@ -1966,31 +2113,31 @@ static async activateUser(req, res, next) {
         AND is_deleted = FALSE
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "User activated successfully.",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "User activated successfully.",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
 
   // ============================================================
@@ -2004,26 +2151,26 @@ static async activateUser(req, res, next) {
   // - Employee details
   // ============================================================
 
- // ============================================================
-// LIST ALL SHOPS WITH EMPLOYEES
-//
-// Active + Deactivated shops
-// Soft deleted shops hidden
-//
-// Each shop includes:
-// - Employee count
-// - Employee details
-// ============================================================
+  // ============================================================
+  // LIST ALL SHOPS WITH EMPLOYEES
+  //
+  // Active + Deactivated shops
+  // Soft deleted shops hidden
+  //
+  // Each shop includes:
+  // - Employee count
+  // - Employee details
+  // ============================================================
 
-static async getShopsWithEmployees(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  static async getShopsWithEmployees(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    // --------------------------------------------------------
-    // Get shops
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Get shops
+      // --------------------------------------------------------
 
-    let shopSql = `
+      let shopSql = `
       SELECT
         id,
         organization_id,
@@ -2041,32 +2188,32 @@ static async getShopsWithEmployees(req, res, next) {
       WHERE is_deleted = FALSE
     `;
 
-    const shopParams = [];
+      const shopParams = [];
 
-    if (orgId) {
-      shopSql += `
+      if (orgId) {
+        shopSql += `
         AND organization_id = ?
       `;
 
-      shopParams.push(orgId);
-    }
+        shopParams.push(orgId);
+      }
 
-    shopSql += `
+      shopSql += `
       ORDER BY name ASC
     `;
 
-    const shops = await query(
-      shopSql,
-      shopParams
-    );
+      const shops = await query(
+        shopSql,
+        shopParams
+      );
 
-    // --------------------------------------------------------
-    // Attach employees to each shop
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // Attach employees to each shop
+      // --------------------------------------------------------
 
-    for (const shop of shops) {
-      const employees = await query(
-        `
+      for (const shop of shops) {
+        const employees = await query(
+          `
           SELECT
             u.id,
             u.organization_id,
@@ -2090,55 +2237,55 @@ static async getShopsWithEmployees(req, res, next) {
 
           ORDER BY u.full_name ASC
         `,
-        [
-          shop.id,
-          shop.organization_id,
-        ]
-      );
+          [
+            shop.id,
+            shop.organization_id,
+          ]
+        );
 
-      shop.employeeCount = employees.length;
-      shop.employees = employees;
+        shop.employeeCount = employees.length;
+        shop.employees = employees;
+      }
+
+      res.json({
+        success: true,
+        data: shops,
+      });
+    } catch (error) {
+      next(error);
     }
-
-    res.json({
-      success: true,
-      data: shops,
-    });
-  } catch (error) {
-    next(error);
   }
-}
 
-// ============================================================
-// TYRE SIZE MASTER
-// ============================================================
+  // ============================================================
+  // TYRE SIZE MASTER
+  // ============================================================
 
-// CREATE TYRE SIZE
-static async createTyreSize(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  // CREATE TYRE SIZE
+  static async createTyreSize(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    if (!orgId) {
-      throw new AppError(
-        "organizationId is required",
-        400
-      );
-    }
+      if (!orgId) {
+        throw new AppError(
+          "organizationId is required",
+          400
+        );
+      }
 
-    const { size } = req.body;
+      const { size } = req.body;
 
-    if (!size || !size.trim()) {
-      throw new AppError(
-        "Tyre size is required",
-        400
-      );
-    }
+      if (!size || !size.trim()) {
+        throw new AppError(
+          "Tyre size is required",
+          400
+        );
+      }
 
-    const normalizedSize = size.trim();
+      const normalizedSize = size.trim();
 
-    // Check duplicate within same organization
-    const existingSize = await getOne(
-      `
+      // Check duplicate within same organization
+      const existingSize = await getOne(
+        `
         SELECT id
         FROM tyre_sizes
         WHERE organization_id = ?
@@ -2146,24 +2293,24 @@ static async createTyreSize(req, res, next) {
           AND is_active = 1
         LIMIT 1
       `,
-      [
-        orgId,
-        normalizedSize,
-      ]
-    );
-
-    if (existingSize) {
-      throw new AppError(
-        "This tyre size already exists",
-        409
+        [
+          orgId,
+          normalizedSize,
+        ]
       );
-    }
 
-    const id = uuid();
-    const now = new Date().toISOString();
+      if (existingSize) {
+        throw new AppError(
+          "This tyre size already exists",
+          409
+        );
+      }
 
-    await execute(
-      `
+      const id = uuid();
+      const now = new Date().toISOString();
+
+      await execute(
+        `
         INSERT INTO tyre_sizes
         (
           id,
@@ -2187,123 +2334,123 @@ static async createTyreSize(req, res, next) {
           ?
         )
       `,
-      [
-        id,
-        orgId,
-        normalizedSize,
-        now,
-        req.user.id,
-        now,
-        req.user.id,
-      ]
-    );
+        [
+          id,
+          orgId,
+          normalizedSize,
+          now,
+          req.user.id,
+          now,
+          req.user.id,
+        ]
+      );
 
-    const tyreSize = await getOne(
-      `
+      const tyreSize = await getOne(
+        `
         SELECT *
         FROM tyre_sizes
         WHERE id = ?
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.status(201).json({
-      success: true,
-      message: "Tyre size created successfully",
-      data: tyreSize,
-    });
-  } catch (error) {
-    next(error);
+      res.status(201).json({
+        success: true,
+        message: "Tyre size created successfully",
+        data: tyreSize,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
 
-// LIST TYRE SIZES
-static async listTyreSizes(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
+  // LIST TYRE SIZES
+  static async listTyreSizes(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
 
-    let sql = `
+      let sql = `
       SELECT *
       FROM tyre_sizes
       WHERE 1 = 1
     `;
 
-    const params = [];
+      const params = [];
 
-    if (orgId) {
-      sql += `
+      if (orgId) {
+        sql += `
         AND organization_id = ?
       `;
 
-      params.push(orgId);
-    }
+        params.push(orgId);
+      }
 
-    sql += `
+      sql += `
       ORDER BY size ASC
     `;
 
-    const tyreSizes = await query(
-      sql,
-      params
-    );
-
-    res.json({
-      success: true,
-      data: tyreSizes,
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-
-// UPDATE TYRE SIZE
-static async updateTyreSize(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
-    const { size } = req.body;
-
-    if (!size || !size.trim()) {
-      throw new AppError(
-        "Tyre size is required",
-        400
+      const tyreSizes = await query(
+        sql,
+        params
       );
+
+      res.json({
+        success: true,
+        data: tyreSizes,
+      });
+    } catch (error) {
+      next(error);
     }
+  }
 
-    const normalizedSize = size.trim();
 
-    let checkSql = `
+  // UPDATE TYRE SIZE
+  static async updateTyreSize(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
+      const { size } = req.body;
+
+      if (!size || !size.trim()) {
+        throw new AppError(
+          "Tyre size is required",
+          400
+        );
+      }
+
+      const normalizedSize = size.trim();
+
+      let checkSql = `
       SELECT *
       FROM tyre_sizes
       WHERE id = ?
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const tyreSize = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!tyreSize) {
-      throw new AppError(
-        "Tyre size not found or access denied",
-        404
+      const tyreSize = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const duplicateSize = await getOne(
-      `
+      if (!tyreSize) {
+        throw new AppError(
+          "Tyre size not found or access denied",
+          404
+        );
+      }
+
+      const duplicateSize = await getOne(
+        `
         SELECT id
         FROM tyre_sizes
         WHERE organization_id = ?
@@ -2312,23 +2459,23 @@ static async updateTyreSize(req, res, next) {
           AND is_active = 1
         LIMIT 1
       `,
-      [
-        tyreSize.organization_id,
-        normalizedSize,
-        id,
-      ]
-    );
-
-    if (duplicateSize) {
-      throw new AppError(
-        "This tyre size already exists",
-        409
+        [
+          tyreSize.organization_id,
+          normalizedSize,
+          id,
+        ]
       );
-    }
 
-    const now = new Date().toISOString();
+      if (duplicateSize) {
+        throw new AppError(
+          "This tyre size already exists",
+          409
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE tyre_sizes
       SET
         size = ?,
@@ -2337,82 +2484,82 @@ static async updateTyreSize(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      normalizedSize,
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        normalizedSize,
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
-    }
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
 
-    await execute(
-      updateSql,
-      updateParams
-    );
+      await execute(
+        updateSql,
+        updateParams
+      );
 
-    const updatedTyreSize = await getOne(
-      `
+      const updatedTyreSize = await getOne(
+        `
         SELECT *
         FROM tyre_sizes
         WHERE id = ?
       `,
-      [id]
-    );
+        [id]
+      );
 
-    res.json({
-      success: true,
-      message: "Tyre size updated successfully",
-      data: updatedTyreSize,
-    });
+      res.json({
+        success: true,
+        message: "Tyre size updated successfully",
+        data: updatedTyreSize,
+      });
 
-  } catch (error) {
-    next(error);
+    } catch (error) {
+      next(error);
+    }
   }
-}
 
 
-// DEACTIVATE TYRE SIZE
-static async deactivateTyreSize(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  // DEACTIVATE TYRE SIZE
+  static async deactivateTyreSize(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT id
       FROM tyre_sizes
       WHERE id = ?
         AND is_active = 1
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const tyreSize = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!tyreSize) {
-      throw new AppError(
-        "Tyre size not found or already inactive",
-        404
+      const tyreSize = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!tyreSize) {
+        throw new AppError(
+          "Tyre size not found or already inactive",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE tyre_sizes
       SET
         is_active = 0,
@@ -2421,71 +2568,71 @@ static async deactivateTyreSize(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Tyre size deactivated successfully",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Tyre size deactivated successfully",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 
 
-// ACTIVATE TYRE SIZE
-static async activateTyreSize(req, res, next) {
-  try {
-    const orgId = getOrgScope(req);
-    const { id } = req.params;
+  // ACTIVATE TYRE SIZE
+  static async activateTyreSize(req, res, next) {
+    try {
+      const orgId = getOrgScope(req);
+      const { id } = req.params;
 
-    let checkSql = `
+      let checkSql = `
       SELECT id
       FROM tyre_sizes
       WHERE id = ?
         AND is_active = 0
     `;
 
-    const checkParams = [id];
+      const checkParams = [id];
 
-    if (orgId) {
-      checkSql += `
+      if (orgId) {
+        checkSql += `
         AND organization_id = ?
       `;
 
-      checkParams.push(orgId);
-    }
+        checkParams.push(orgId);
+      }
 
-    const tyreSize = await getOne(
-      checkSql,
-      checkParams
-    );
-
-    if (!tyreSize) {
-      throw new AppError(
-        "Tyre size not found or already active",
-        404
+      const tyreSize = await getOne(
+        checkSql,
+        checkParams
       );
-    }
 
-    const now = new Date().toISOString();
+      if (!tyreSize) {
+        throw new AppError(
+          "Tyre size not found or already active",
+          404
+        );
+      }
 
-    let updateSql = `
+      const now = new Date().toISOString();
+
+      let updateSql = `
       UPDATE tyre_sizes
       SET
         is_active = 1,
@@ -2494,31 +2641,31 @@ static async activateTyreSize(req, res, next) {
       WHERE id = ?
     `;
 
-    const updateParams = [
-      now,
-      req.user.id,
-      id,
-    ];
+      const updateParams = [
+        now,
+        req.user.id,
+        id,
+      ];
 
-    if (orgId) {
-      updateSql += ` AND organization_id = ?`;
-      updateParams.push(orgId);
+      if (orgId) {
+        updateSql += ` AND organization_id = ?`;
+        updateParams.push(orgId);
+      }
+
+      await execute(
+        updateSql,
+        updateParams
+      );
+
+      res.json({
+        success: true,
+        message: "Tyre size activated successfully",
+      });
+
+    } catch (error) {
+      next(error);
     }
-
-    await execute(
-      updateSql,
-      updateParams
-    );
-
-    res.json({
-      success: true,
-      message: "Tyre size activated successfully",
-    });
-
-  } catch (error) {
-    next(error);
   }
-}
 }
 
 module.exports = AdminController;

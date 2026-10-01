@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node test-api.js && node verify-roles.js && node test-production-readiness.js",
-    "test:postgres": "node test-postgres.js",
+    "test": "node test/contract-mismatches.test.js",
     "migrate": "node -e 'require(\"./src/config/db\").initDatabase().then(() => process.exit(0))'"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +31,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
-    "pg-mem": "^3.0.14"
+    "pg-mem": "^3.0.14",
+    "supertest": "^7.3.0"
   }
 }

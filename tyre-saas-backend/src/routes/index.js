@@ -3,6 +3,7 @@ const authRoutes = require("./authRoutes");
 const employeeRoutes = require("./employeeRoutes");
 const adminRoutes = require("./adminRoutes");
 const superAdminRoutes = require("./superAdminRoutes");
+const dailyReportRoutes = require("./DailyReportRoutes");
 
 const router = express.Router();
 
@@ -18,5 +19,6 @@ router.use("/auth", authRoutes);
 router.use("/employee", employeeRoutes);
 router.use("/admin", adminRoutes);
 router.use("/super-admin", superAdminRoutes);
+router.use("/daily-reports", dailyReportRoutes);
 
 module.exports = router;

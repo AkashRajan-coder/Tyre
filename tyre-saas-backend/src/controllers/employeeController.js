@@ -38,6 +38,62 @@ async function verifyShopAccess(userId, userRole, userOrgId, shopId) {
   return shop;
 }
 
+async function resolveTyreSize(orgId, tyreSizeId, tyreSizeText) {
+  if (tyreSizeId) {
+    const row = await getOne(
+      `SELECT id, size FROM tyre_sizes WHERE id = ? AND organization_id = ? AND is_active = 1`,
+      [tyreSizeId, orgId]
+    );
+    if (!row) {
+      throw new AppError("Invalid tyre size", 400);
+    }
+    return { id: row.id, text: tyreSizeText && tyreSizeText.trim() ? tyreSizeText.trim() : row.size };
+  }
+
+  if (tyreSizeText && tyreSizeText.trim()) {
+    const cleanText = tyreSizeText.trim();
+    const sizes = await query(
+      `SELECT id, size FROM tyre_sizes WHERE organization_id = ? AND is_active = 1`,
+      [orgId]
+    );
+    const normalizedInput = cleanText.replace(/\s+/g, "").toLowerCase();
+    const match = sizes.find(
+      (s) => (s.size || "").replace(/\s+/g, "").toLowerCase() === normalizedInput
+    );
+    return { id: match ? match.id : null, text: cleanText };
+  }
+
+  throw new AppError("tyreSize or tyreSizeId is required", 400);
+}
+
+async function resolveTyreBrand(orgId, tyreBrandId, tyreBrandText) {
+  if (tyreBrandId) {
+    const row = await getOne(
+      `SELECT id, name FROM tyre_brands WHERE id = ? AND organization_id = ? AND is_active = 1`,
+      [tyreBrandId, orgId]
+    );
+    if (!row) {
+      throw new AppError("Invalid tyre brand", 400);
+    }
+    return { id: row.id, text: tyreBrandText && tyreBrandText.trim() ? tyreBrandText.trim() : row.name };
+  }
+
+  if (tyreBrandText && tyreBrandText.trim()) {
+    const cleanText = tyreBrandText.trim();
+    const brands = await query(
+      `SELECT id, name FROM tyre_brands WHERE organization_id = ? AND is_active = 1`,
+      [orgId]
+    );
+    const normalizedInput = cleanText.replace(/\s+/g, "").toLowerCase();
+    const match = brands.find(
+      (b) => (b.name || "").replace(/\s+/g, "").toLowerCase() === normalizedInput
+    );
+    return { id: match ? match.id : null, text: cleanText };
+  }
+
+  throw new AppError("tyreBrand or tyreBrandId is required", 400);
+}
+
 class EmployeeController {
 
   // ============================================================
@@ -440,8 +496,12 @@ static async createEnquiry(req, res, next) {
 
       tyreSizeId,
       tyreBrandId,
+      tyreSize,
+      tyreBrand,
 
       amount,
+      estimatedBudget,
+      quantity,
 
       followUpDate,
       remarks,
@@ -476,24 +536,24 @@ static async createEnquiry(req, res, next) {
     }
 
     // --------------------------------------------------------
-    // Amount validation
+    // Amount / estimatedBudget validation (allow 0, reject missing or negative)
     // --------------------------------------------------------
 
-    if (
-      amount === undefined ||
-      amount === null ||
-      amount === ""
-    ) {
+    const rawAmount =
+      amount !== undefined && amount !== null && amount !== ""
+        ? amount
+        : estimatedBudget;
+
+    if (rawAmount === undefined || rawAmount === null || rawAmount === "") {
       throw new AppError(
-        "amount is required",
+        "amount or estimatedBudget is required",
         400
       );
     }
 
-    if (
-      Number.isNaN(Number(amount)) ||
-      Number(amount) < 0
-    ) {
+    const parsedAmount = Number(rawAmount);
+
+    if (Number.isNaN(parsedAmount) || parsedAmount < 0) {
       throw new AppError(
         "amount must be a valid positive number",
         400
@@ -501,72 +561,20 @@ static async createEnquiry(req, res, next) {
     }
 
     // --------------------------------------------------------
-    // Tyre Size validation
+    // Tyre Size & Tyre Brand validation (supports id or text matching)
     // --------------------------------------------------------
 
-    if (!tyreSizeId) {
-      throw new AppError(
-        "tyreSizeId is required",
-        400
-      );
-    }
-
-    const tyreSize = await getOne(
-      `
-        SELECT
-          id,
-          size
-        FROM tyre_sizes
-        WHERE id = ?
-          AND organization_id = ?
-          AND is_active = 1
-      `,
-      [
-        tyreSizeId,
-        req.user.organizationId,
-      ]
+    const resolvedTyreSize = await resolveTyreSize(
+      req.user.organizationId,
+      tyreSizeId,
+      tyreSize
     );
 
-    if (!tyreSize) {
-      throw new AppError(
-        "Invalid tyre size",
-        400
-      );
-    }
-
-    // --------------------------------------------------------
-    // Tyre Brand validation
-    // --------------------------------------------------------
-
-    if (!tyreBrandId) {
-      throw new AppError(
-        "tyreBrandId is required",
-        400
-      );
-    }
-
-    const tyreBrand = await getOne(
-      `
-        SELECT
-          id,
-          name
-        FROM tyre_brands
-        WHERE id = ?
-          AND organization_id = ?
-          AND is_active = 1
-      `,
-      [
-        tyreBrandId,
-        req.user.organizationId,
-      ]
+    const resolvedTyreBrand = await resolveTyreBrand(
+      req.user.organizationId,
+      tyreBrandId,
+      tyreBrand
     );
-
-    if (!tyreBrand) {
-      throw new AppError(
-        "Invalid tyre brand",
-        400
-      );
-    }
 
     // --------------------------------------------------------
     // Valid FIT status
@@ -754,8 +762,12 @@ static async createEnquiry(req, res, next) {
 
           tyre_size_id,
           tyre_brand_id,
+          tyre_size,
+          tyre_brand,
 
           amount,
+          estimated_budget,
+          quantity,
 
           follow_up_date,
           status,
@@ -798,7 +810,11 @@ static async createEnquiry(req, res, next) {
 
           ?,
           ?,
+          ?,
+          ?,
 
+          ?,
+          ?,
           ?,
 
           ?,
@@ -840,10 +856,14 @@ static async createEnquiry(req, res, next) {
 
         vehicleType || null,
 
-        tyreSizeId,
-        tyreBrandId,
+        resolvedTyreSize.id || null,
+        resolvedTyreBrand.id || null,
+        resolvedTyreSize.text,
+        resolvedTyreBrand.text,
 
-        Number(amount),
+        parsedAmount,
+        parsedAmount,
+        Number(quantity) || 4,
 
         followUpIso,
         remarks || null,
@@ -1443,8 +1463,11 @@ static async updateEnquiry(req, res, next) {
 
       tyreSize,
       tyreBrand,
+      tyreSizeId,
+      tyreBrandId,
       quantity,
 
+      amount,
       estimatedBudget,
 
       fitStatus,
@@ -1465,6 +1488,52 @@ static async updateEnquiry(req, res, next) {
       outsideShopAddress,
       outsideShopAmount,
     } = req.body;
+
+    // --------------------------------------------------------
+    // Amount / estimatedBudget tolerance
+    // --------------------------------------------------------
+
+    const rawAmount =
+      amount !== undefined && amount !== null && amount !== ""
+        ? amount
+        : estimatedBudget;
+
+    let finalAmount = null;
+    if (rawAmount !== undefined && rawAmount !== null && rawAmount !== "") {
+      const parsed = Number(rawAmount);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        throw new AppError("amount must be a valid positive number", 400);
+      }
+      finalAmount = parsed;
+    }
+
+    // --------------------------------------------------------
+    // Tyre size & brand tolerance
+    // --------------------------------------------------------
+
+    let finalTyreSizeId = null;
+    let finalTyreSizeText = null;
+    if (tyreSizeId !== undefined || tyreSize !== undefined) {
+      const resolvedSize = await resolveTyreSize(
+        req.user.organizationId,
+        tyreSizeId,
+        tyreSize
+      );
+      finalTyreSizeId = resolvedSize.id;
+      finalTyreSizeText = resolvedSize.text;
+    }
+
+    let finalTyreBrandId = null;
+    let finalTyreBrandText = null;
+    if (tyreBrandId !== undefined || tyreBrand !== undefined) {
+      const resolvedBrand = await resolveTyreBrand(
+        req.user.organizationId,
+        tyreBrandId,
+        tyreBrand
+      );
+      finalTyreBrandId = resolvedBrand.id;
+      finalTyreBrandText = resolvedBrand.text;
+    }
 
     // --------------------------------------------------------
     // Get existing enquiry
@@ -1768,6 +1837,16 @@ static async updateEnquiry(req, res, next) {
             tyre_brand
           ),
 
+          tyre_size_id = COALESCE(
+            ?,
+            tyre_size_id
+          ),
+
+          tyre_brand_id = COALESCE(
+            ?,
+            tyre_brand_id
+          ),
+
           quantity = COALESCE(
             ?,
             quantity
@@ -1776,6 +1855,11 @@ static async updateEnquiry(req, res, next) {
           estimated_budget = COALESCE(
             ?,
             estimated_budget
+          ),
+
+          amount = COALESCE(
+            ?,
+            amount
           ),
 
           fit_status = COALESCE(
@@ -1854,13 +1938,19 @@ static async updateEnquiry(req, res, next) {
 
         finalVehicleType || null,
 
-        tyreSize || null,
+        finalTyreSizeText !== null ? finalTyreSizeText : null,
 
-        tyreBrand || null,
+        finalTyreBrandText !== null ? finalTyreBrandText : null,
+
+        finalTyreSizeId !== null ? finalTyreSizeId : null,
+
+        finalTyreBrandId !== null ? finalTyreBrandId : null,
 
         quantity || null,
 
-        estimatedBudget || null,
+        finalAmount !== null ? finalAmount : null,
+
+        finalAmount !== null ? finalAmount : null,
 
         fitStatus || null,
 
@@ -1945,6 +2035,72 @@ static async getCarBrands(req, res, next) {
 }
 
 // =========================
+// LIST TYRE SIZES (EMPLOYEE)
+// =========================
+static async getTyreSizes(req, res, next) {
+  try {
+    const organizationId = req.user.organizationId;
+
+    const sizes = await query(
+      `
+        SELECT
+          id,
+          organization_id,
+          size,
+          is_active,
+          created_at,
+          last_modified_at
+        FROM tyre_sizes
+        WHERE organization_id = ?
+          AND is_active = 1
+        ORDER BY size ASC
+      `,
+      [organizationId]
+    );
+
+    res.json({
+      success: true,
+      data: sizes,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// =========================
+// LIST TYRE BRANDS (EMPLOYEE)
+// =========================
+static async getTyreBrands(req, res, next) {
+  try {
+    const organizationId = req.user.organizationId;
+
+    const brands = await query(
+      `
+        SELECT
+          id,
+          organization_id,
+          name,
+          is_active,
+          created_at,
+          last_modified_at
+        FROM tyre_brands
+        WHERE organization_id = ?
+          AND is_active = 1
+        ORDER BY name ASC
+      `,
+      [organizationId]
+    );
+
+    res.json({
+      success: true,
+      data: brands,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// =========================
 // LIST CAR MODELS
 // =========================
 static async getCarModels(req, res, next) {
@@ -1952,28 +2108,29 @@ static async getCarModels(req, res, next) {
     const organizationId = req.user.organizationId;
     const { brandId } = req.query;
 
-    if (!brandId) {
-      throw new AppError("brandId is required", 400);
+    let sql = `
+      SELECT
+        cm.id,
+        cm.name,
+        cm.car_brand_id,
+        cb.name AS brand_name
+      FROM car_models cm
+      JOIN car_brands cb
+        ON cb.id = cm.car_brand_id
+      WHERE cm.organization_id = ?
+        AND cm.is_active = 1
+        AND cb.is_active = 1
+    `;
+    const params = [organizationId];
+
+    if (brandId) {
+      sql += ` AND cm.car_brand_id = ?`;
+      params.push(brandId);
     }
 
-    const models = await query(
-      `
-        SELECT
-          cm.id,
-          cm.name,
-          cm.car_brand_id,
-          cb.name AS brand_name
-        FROM car_models cm
-        JOIN car_brands cb
-          ON cb.id = cm.car_brand_id
-        WHERE cm.organization_id = ?
-          AND cm.car_brand_id = ?
-          AND cm.is_active = 1
-          AND cb.is_active = 1
-        ORDER BY cm.name ASC
-      `,
-      [organizationId, brandId]
-    );
+    sql += ` ORDER BY cb.name ASC, cm.name ASC`;
+
+    const models = await query(sql, params);
 
     res.json({
       success: true,

@@ -396,6 +396,18 @@ Authorization: Bearer <JWT_TOKEN>
 
   "paths": {
 
+    "/health": {
+      "get": {
+        "summary": "Service health check",
+        "description": "Unauthenticated ping endpoint used by Render health checks and Flutter mobile app.",
+        "responses": {
+          "200": {
+            "description": "Service is healthy and ready"
+          }
+        }
+      }
+    },
+
     /* =========================================================
        AUTH
        ========================================================= */
@@ -782,6 +794,157 @@ Authorization: Bearer <JWT_TOKEN>
       }
     },
 
+    "/api/v1/employee/tyre-sizes": {
+      "get": {
+        "tags": [
+          "Employee"
+        ],
+        "summary": "List active tyre sizes",
+        "description": "Read-only list of active tyre sizes scoped to the employee organization.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active tyre sizes list"
+          }
+        }
+      }
+    },
+
+    "/api/v1/employee/tyre-brands": {
+      "get": {
+        "tags": [
+          "Employee"
+        ],
+        "summary": "List active tyre brands",
+        "description": "Read-only list of active tyre brands scoped to the employee organization.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active tyre brands list"
+          }
+        }
+      }
+    },
+
+    "/api/v1/employee/car-brands": {
+      "get": {
+        "tags": [
+          "Employee"
+        ],
+        "summary": "List active car brands",
+        "description": "Read-only list of active car brands scoped to the employee organization.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active car brands list"
+          }
+        }
+      }
+    },
+
+    "/api/v1/employee/car-models": {
+      "get": {
+        "tags": [
+          "Employee"
+        ],
+        "summary": "List active car models",
+        "description": "Read-only list of active car models, optionally filtered by brandId.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "brandId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active car models list"
+          }
+        }
+      }
+    },
+
+    "/api/v1/daily-reports": {
+      "get": {
+        "tags": [
+          "Employee",
+          "Admin"
+        ],
+        "summary": "Get daily reports",
+        "description": "Retrieve daily reports scoped by employee shop assignment or admin organization, with optional date filtering and pagination.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shopId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily reports returned successfully"
+          }
+        }
+      }
+    },
+
     /* =========================================================
        ADMIN DASHBOARD
        ========================================================= */
@@ -1060,6 +1223,37 @@ Authorization: Bearer <JWT_TOKEN>
     },
 
     "/api/v1/admin/shops/{id}": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get shop by ID",
+        "description": "Returns one shop with the same fields as the list endpoint. Returns 404 if not found or soft-deleted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shop returned successfully"
+          },
+          "404": {
+            "description": "Shop not found or access denied"
+          }
+        }
+      },
+
       "patch": {
         "tags": [
           "Admin"
@@ -1254,6 +1448,37 @@ Authorization: Bearer <JWT_TOKEN>
     },
 
     "/api/v1/admin/users/{id}": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get user by ID",
+        "description": "Returns user details excluding password_hash, scoped to the organization, and includes assigned shops.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User returned successfully"
+          },
+          "404": {
+            "description": "User not found or access denied"
+          }
+        }
+      },
+
       "patch": {
         "tags": [
           "Admin"

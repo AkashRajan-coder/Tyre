@@ -30,7 +30,8 @@ class TyreProductController {
         tyreSizeId,
         tyreBrandId,
         vehicleType,
-     
+        productName,
+        price = 0,
       } = req.body;
 
       // --------------------------------------------------------
@@ -69,9 +70,9 @@ class TyreProductController {
         );
       }
 
-   
-
-     
+      if (price !== undefined && price !== null && (Number.isNaN(Number(price)) || Number(price) < 0)) {
+        throw new AppError("price must be a valid non-negative number", 400);
+      }
 
       // --------------------------------------------------------
       // CHECK TYRE SIZE
@@ -172,7 +173,8 @@ class TyreProductController {
             tyre_size_id,
             tyre_brand_id,
             vehicle_type,
-        
+            product_name,
+            price,
             is_active,
             created_at,
             created_by,
@@ -181,6 +183,8 @@ class TyreProductController {
           )
           VALUES
           (
+            ?,
+            ?,
             ?,
             ?,
             ?,
@@ -199,7 +203,8 @@ class TyreProductController {
           tyreSizeId,
           tyreBrandId,
           vehicleType,
-        
+          productName ? productName.trim() : null,
+          Number(price) || 0,
           now,
           req.user.id,
           now,
@@ -302,46 +307,10 @@ class TyreProductController {
         tyreSizeId,
         tyreBrandId,
         vehicleType,
-   
+        productName,
+        price,
+        isActive,
       } = req.body;
-
-      // --------------------------------------------------------
-      // BASIC VALIDATION
-      // --------------------------------------------------------
-
-      if (!tyreSizeId) {
-        throw new AppError(
-          "Tyre size is required",
-          400
-        );
-      }
-
-      if (!tyreBrandId) {
-        throw new AppError(
-          "Tyre brand is required",
-          400
-        );
-      }
-
-      if (!vehicleType) {
-        throw new AppError(
-          "Vehicle type is required",
-          400
-        );
-      }
-
-      if (
-        !["TWO_WHEELER", "FOUR_WHEELER"].includes(
-          vehicleType
-        )
-      ) {
-        throw new AppError(
-          "Vehicle type must be TWO_WHEELER or FOUR_WHEELER",
-          400
-        );
-      }
-
-      
 
       // --------------------------------------------------------
       // FIND EXISTING PRODUCT
@@ -376,115 +345,175 @@ class TyreProductController {
       }
 
       // --------------------------------------------------------
-      // CHECK TYRE SIZE
+      // PARTIAL VALIDATION - Validate only provided fields
       // --------------------------------------------------------
 
-      const tyreSize = await getOne(
-        `
-          SELECT id
-          FROM tyre_sizes
-          WHERE id = ?
-            AND organization_id = ?
-            AND is_active = 1
-          LIMIT 1
-        `,
-        [
-          tyreSizeId,
-          tyreProduct.organization_id,
-        ]
-      );
-
-      if (!tyreSize) {
-        throw new AppError(
-          "Tyre size not found, inactive, or access denied",
-          404
+      if (tyreSizeId !== undefined) {
+        const tyreSize = await getOne(
+          `
+            SELECT id
+            FROM tyre_sizes
+            WHERE id = ?
+              AND organization_id = ?
+              AND is_active = 1
+            LIMIT 1
+          `,
+          [
+            tyreSizeId,
+            tyreProduct.organization_id,
+          ]
         );
+
+        if (!tyreSize) {
+          throw new AppError(
+            "Tyre size not found, inactive, or access denied",
+            404
+          );
+        }
+      }
+
+      if (tyreBrandId !== undefined) {
+        const tyreBrand = await getOne(
+          `
+            SELECT id
+            FROM tyre_brands
+            WHERE id = ?
+              AND organization_id = ?
+              AND is_active = 1
+            LIMIT 1
+          `,
+          [
+            tyreBrandId,
+            tyreProduct.organization_id,
+          ]
+        );
+
+        if (!tyreBrand) {
+          throw new AppError(
+            "Tyre brand not found, inactive, or access denied",
+            404
+          );
+        }
+      }
+
+      if (vehicleType !== undefined) {
+        if (
+          !["TWO_WHEELER", "FOUR_WHEELER"].includes(
+            vehicleType
+          )
+        ) {
+          throw new AppError(
+            "Vehicle type must be TWO_WHEELER or FOUR_WHEELER",
+            400
+          );
+        }
+      }
+
+      if (price !== undefined) {
+        if (price === null || Number.isNaN(Number(price)) || Number(price) < 0) {
+          throw new AppError(
+            "price must be a valid non-negative number",
+            400
+          );
+        }
       }
 
       // --------------------------------------------------------
-      // CHECK TYRE BRAND
+      // CHECK DUPLICATE PRODUCT (if size, brand, or vehicle type changed)
       // --------------------------------------------------------
 
-      const tyreBrand = await getOne(
-        `
-          SELECT id
-          FROM tyre_brands
-          WHERE id = ?
-            AND organization_id = ?
-            AND is_active = 1
-          LIMIT 1
-        `,
-        [
-          tyreBrandId,
-          tyreProduct.organization_id,
-        ]
-      );
+      const targetSizeId = tyreSizeId !== undefined ? tyreSizeId : tyreProduct.tyre_size_id;
+      const targetBrandId = tyreBrandId !== undefined ? tyreBrandId : tyreProduct.tyre_brand_id;
+      const targetVehicleType = vehicleType !== undefined ? vehicleType : tyreProduct.vehicle_type;
 
-      if (!tyreBrand) {
-        throw new AppError(
-          "Tyre brand not found, inactive, or access denied",
-          404
+      if (
+        tyreSizeId !== undefined ||
+        tyreBrandId !== undefined ||
+        vehicleType !== undefined
+      ) {
+        const duplicateProduct = await getOne(
+          `
+            SELECT id
+            FROM tyre_products
+            WHERE organization_id = ?
+              AND tyre_size_id = ?
+              AND tyre_brand_id = ?
+              AND vehicle_type = ?
+              AND id != ?
+            LIMIT 1
+          `,
+          [
+            tyreProduct.organization_id,
+            targetSizeId,
+            targetBrandId,
+            targetVehicleType,
+            id,
+          ]
         );
+
+        if (duplicateProduct) {
+          throw new AppError(
+            "This tyre product already exists",
+            409
+          );
+        }
       }
 
       // --------------------------------------------------------
-      // CHECK DUPLICATE PRODUCT
+      // DYNAMIC UPDATE PRODUCT
       // --------------------------------------------------------
 
-      const duplicateProduct = await getOne(
-        `
-          SELECT id
-          FROM tyre_products
-          WHERE organization_id = ?
-            AND tyre_size_id = ?
-            AND tyre_brand_id = ?
-            AND vehicle_type = ?
-            AND id != ?
-          LIMIT 1
-        `,
-        [
-          tyreProduct.organization_id,
-          tyreSizeId,
-          tyreBrandId,
-          vehicleType,
-          id,
-        ]
-      );
+      const updateFields = [];
+      const updateParams = [];
 
-      if (duplicateProduct) {
-        throw new AppError(
-          "This tyre product already exists",
-          409
-        );
+      if (tyreSizeId !== undefined) {
+        updateFields.push("tyre_size_id = ?");
+        updateParams.push(tyreSizeId);
       }
 
-      // --------------------------------------------------------
-      // UPDATE PRODUCT
-      // --------------------------------------------------------
+      if (tyreBrandId !== undefined) {
+        updateFields.push("tyre_brand_id = ?");
+        updateParams.push(tyreBrandId);
+      }
+
+      if (vehicleType !== undefined) {
+        updateFields.push("vehicle_type = ?");
+        updateParams.push(vehicleType);
+      }
+
+      if (productName !== undefined) {
+        updateFields.push("product_name = ?");
+        updateParams.push(productName ? productName.trim() : null);
+      }
+
+      if (price !== undefined) {
+        updateFields.push("price = ?");
+        updateParams.push(Number(price));
+      }
+
+      if (isActive !== undefined) {
+        updateFields.push("is_active = ?");
+        updateParams.push(
+          isActive === true || isActive === 1 || isActive === "1" ? 1 : 0
+        );
+      }
 
       const now = new Date().toISOString();
+      updateFields.push("last_modified_at = ?");
+      updateParams.push(now);
+
+      updateFields.push("last_modified_by = ?");
+      updateParams.push(req.user.id);
+
+      updateParams.push(id);
 
       await execute(
         `
           UPDATE tyre_products
-          SET
-            tyre_size_id = ?,
-            tyre_brand_id = ?,
-            vehicle_type = ?,
-          
-            last_modified_at = ?,
-            last_modified_by = ?
+          SET ${updateFields.join(", ")}
           WHERE id = ?
         `,
-        [
-          tyreSizeId,
-          tyreBrandId,
-          vehicleType,
-       
-          now,
-          req.user.id,
-          id,
-        ]
+        updateParams
       );
 
       // --------------------------------------------------------
@@ -679,7 +708,8 @@ static async listAvailableTyreProducts(req, res, next) {
         tp.tyre_size_id,
         tp.tyre_brand_id,
         tp.vehicle_type,
-     
+        tp.product_name,
+        tp.price,
         tp.is_active,
 
         ts.size AS tyre_size,

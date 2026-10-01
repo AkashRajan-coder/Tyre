@@ -586,14 +586,18 @@ const DailyReportController = {
 
 
   // ============================================================
-  // ADMIN - GET DAILY REPORTS
+  // GET DAILY REPORTS (ADMIN & EMPLOYEE)
   // ============================================================
 
   async getDailyReports(req, res, next) {
     try {
-      const organizationId = req.user.organizationId;
+      const userRole = req.user.role;
+      const organizationId =
+        userRole === "SUPER_ADMIN"
+          ? req.query.organizationId || null
+          : req.user.organizationId;
 
-      if (!organizationId) {
+      if (!organizationId && userRole !== "SUPER_ADMIN") {
         throw new AppError(
           "Organization is required",
           400
@@ -602,35 +606,67 @@ const DailyReportController = {
 
       const {
         shopId,
+        from,
         startDate,
+        to,
         endDate,
+        limit = 50,
+        offset = 0,
       } = req.query;
+
+      // Employee shop assignment check
+      if (userRole === "EMPLOYEE") {
+        if (shopId) {
+          const isAssigned = await getOne(
+            "SELECT id FROM user_shops WHERE user_id = ? AND shop_id = ?",
+            [req.user.id, shopId]
+          );
+          if (!isAssigned) {
+            throw new AppError(
+              "Access denied: You are not assigned to this shop",
+              403
+            );
+          }
+        }
+      }
 
       let sql = `
         SELECT
           dr.*,
-          s.name AS shop_name
+          s.name AS shop_name,
+          s.code AS shop_code
         FROM daily_reports dr
         LEFT JOIN shops s
           ON s.id = dr.shop_id
-        WHERE dr.organization_id = ?
+        WHERE 1 = 1
       `;
 
-      const params = [organizationId];
+      const params = [];
+
+      if (organizationId) {
+        sql += ` AND dr.organization_id = ?`;
+        params.push(organizationId);
+      }
 
       if (shopId) {
         sql += ` AND dr.shop_id = ?`;
         params.push(shopId);
+      } else if (userRole === "EMPLOYEE") {
+        // Employee with no shopId sees all shops they are assigned to
+        sql += ` AND dr.shop_id IN (SELECT shop_id FROM user_shops WHERE user_id = ?)`;
+        params.push(req.user.id);
       }
 
-      if (startDate) {
+      const fromDate = from || startDate;
+      if (fromDate) {
         sql += ` AND dr.report_date >= ?`;
-        params.push(startDate);
+        params.push(fromDate);
       }
 
-      if (endDate) {
+      const toDate = to || endDate;
+      if (toDate) {
         sql += ` AND dr.report_date <= ?`;
-        params.push(endDate);
+        params.push(toDate);
       }
 
       sql += `
@@ -639,11 +675,21 @@ const DailyReportController = {
           dr.created_at DESC
       `;
 
+      const l = parseInt(limit, 10);
+      const o = parseInt(offset, 10);
+      const safeLimit = !Number.isNaN(l) && l > 0 ? Math.min(l, 100) : 50;
+      const safeOffset = !Number.isNaN(o) && o >= 0 ? o : 0;
+
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(safeLimit, safeOffset);
+
       const reports = await query(sql, params);
 
       return res.status(200).json({
         success: true,
         count: reports.length,
+        limit: safeLimit,
+        offset: safeOffset,
         data: reports,
       });
 
