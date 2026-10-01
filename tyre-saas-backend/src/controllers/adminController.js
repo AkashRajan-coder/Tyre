@@ -1,40 +1,4 @@
-The Node.js / Express 5 / CommonJS "tyre-saas-backend" is deployed on Render(Neon PostgreSQL in production) and consumed by a Flutter app(roles ADMIN and EMPLOYEE only).I will NOT run it locally.I will push to git and Render will deploy it, so everything must work on a fresh Render deploy with no manual shell steps.The earlier audit fixes(missing tables, db.js placeholder bugs, etc.) are done or being done separately.Do not undo them.This task fixes the contract mismatches between the Flutter app and this backend.
-
-Read the relevant files fully before editing.If the real code differs from my description, follow the real code and tell me.Keep the response envelope { success: true, data: ... } for every endpoint.Keep all queries multi - tenant safe(scope by organization_id; employees also need an active user_shops mapping for the shop).Use "?" placeholders through the existing db helpers.
-
-  A.Missing routes(the Flutter app currently gets 404 on these)
-1. GET / api / v1 / admin / shops /: id in src / routes / adminRoutes.js, with AdminController.getShopById.Return one shop with the same fields as the list endpoint.Return 404 if it is not in the admin's organization or is soft-deleted. Same behavior for super admin via ?organizationId.
-2. GET / api / v1 / admin / users /:id with AdminController.getUserById.Return the user without password_hash, include assigned shops, scope to the organization, and return 404 otherwise.
-3. GET / api / v1 / employee / tyre - sizes and GET / api / v1 / employee / tyre - brands in src / routes / employeeRoutes.js.Read - only, limited to the employee's own organization, active records only. Reuse the existing admin list logic through a shared function, but do not expose any admin write routes to employees. Also check whether employees need GET /employee/tyre-products or car brands/models, and confirm the car-brands and car-models employee routes already exist and work.
-4. GET / api / v1 / daily - reports with DailyReportController.getDailyReports(requireAuth plus the existing employee / admin role rules).Supports ? shopId =, ? from = YYYY - MM - DD, ? to = YYYY - MM - DD, ? limit and ? offset.An employee only sees shops they are mapped to.An admin sees shops in their organization.Make sure this router sits under the apiLimiter(it should already, after the earlier audit fix).
-
-  B.Enquiry creation contract(POST / api / v1 / employee / enquiries, employeeController.createEnquiry)
-The Flutter app sends estimatedBudget(not amount), and sends tyreSize and tyreBrand as text (not tyreSizeId and tyreBrandId). The new Flutter version will send both the IDs and the text.Make the backend accept BOTH, so old and new app versions work:
-- amount = req.body.amount ?? req.body.estimatedBudget.Do not reject 0(use a null check, not a falsy check).Reject only if both are missing or negative.Store it in amount and estimated_budget.
-- If tyreSizeId is given, validate it belongs to the organization.Otherwise, if the tyreSize text is given, store it in the tyre_size text column, and best - effort match it to an existing tyre_sizes row(case -insensitive, whitespace - insensitive) to fill tyre_size_id.Do the same for tyreBrandId, tyreBrand text and tyre_brands.Throw 400 only if neither the id nor the text is provided.
-- Keep every other existing validation, the duplicate - phone check, and the enquiry_logs audit entry.
-- Apply the same tolerance to the update - enquiry endpoint if it has the same mandatory fields.
-
-  C.Tyre product update(PATCH / api / v1 / admin / tyre - products /: id, TyreProductController.updateTyreProduct)
-    - Make it a real partial update.Only validate and update the fields present in the body(tyreSizeId, tyreBrandId, vehicleType, productName, price, isActive).Updating only { price } must work.
-- Make sure tyre_products has price NUMERIC(10, 2) in both the SQLite and Postgres DDL and in an idempotent migration.If the column is missing in an existing database, add it with ALTER TABLE ... ADD COLUMN IF NOT EXISTS(use a SQLite - safe guarded approach for SQLite).
-- Return the updated product.
-
-  D.Render readiness
-1. index.js must listen on process.env.PORT(Render injects it) and bind to 0.0.0.0.The 5000 default is for development only.
-2. Migrations must run automatically and idempotently on server startup(CREATE TABLE IF NOT EXISTS plus guarded ALTER TABLE) for Postgres, because I have no shell on Render.Log what ran.If migrations fail in production, exit with a clear error.
-3. Add GET / health(no auth, outside the rate limiter, returns { success: true, status: "ok" }) so Render health checks and the Flutter app can wake the service.
-4. Production must use DATABASE_URL(Neon, SSL).Do not fall back to SQLite in production, and fail with a clear message if DATABASE_URL is missing.Do not write any data files to the local disk in production(Render's disk is ephemeral).
-5. Add`"start": "node index.js"` and an`engines.node` field in package.json if they are missing.Create or update.env.example and README with the Render environment variables: DATABASE_URL, JWT_SECRET, CORS_ORIGIN, NODE_ENV = production.
-6. CORS: the Flutter mobile app does not send an Origin header, so CORS restrictions must not break native requests(requests with no Origin must be allowed). Browser origins stay restricted to CORS_ORIGIN.
-7. Set app.set('trust proxy', 1) so the rate limiter sees the real client IP behind Render's proxy.
-
-E.Verification(no localhost needed)
-  - Add or extend supertest tests(SQLite or in -memory DB) for every new or changed endpoint: shops /: id, users /: id, employee tyre lists, GET daily - reports, createEnquiry with the old payload(estimatedBudget plus tyreSize text), createEnquiry with the new payload(amount plus IDs), PATCH tyre - product with only price, GET / health.Also test the tenant isolation and role rules(an employee cannot call admin routes, an admin cannot read another organization).
-- Run`npm test` and show the output.
-- Update the Swagger docs for all new or changed endpoints.
-
-Final deliverable: files changed, the new endpoint list with example request and response JSON, the migration SQL that runs on startup, the Render environment variable checklist, and any risks I should check after deploying.const { getOne, query, execute, uuid } = require("../config/db");
+const { getOne, query, execute, uuid } = require("../config/db");
 const { hashPassword } = require("../utils/password");
 const { AppError } = require("../middlewares/error");
 
