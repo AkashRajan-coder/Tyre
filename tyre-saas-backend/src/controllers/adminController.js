@@ -199,8 +199,13 @@ class AdminController {
         success: true,
         data: {
           totalEnquiries,
+          totalCustomers: totalEnquiries,
           pendingEnquiries,
+          pendingCount: pendingEnquiries,
           completedEnquiries,
+          completedCount: completedEnquiries,
+          wonEnquiries: completedEnquiries,
+          overdueCount: overdue,
           dueToday,
           overdue,
           conversionRate,
