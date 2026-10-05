@@ -21,7 +21,7 @@ async function initDatabase(forceType = null) {
     }
   }
 
-  if (activeDbType === "postgres" || (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith("postgres"))) {
+  if (activeDbType === "postgres" || (activeDbType !== "sqlite" && process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith("postgres"))) {
     const { Pool } = require("pg");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,

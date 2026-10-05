@@ -1,3 +1,7 @@
+process.env.NODE_ENV = "test";
+process.env.DB_TYPE = "sqlite";
+delete process.env.DATABASE_URL;
+
 const request = require("supertest");
 const assert = require("assert");
 const app = require("../index");
@@ -10,7 +14,8 @@ async function runTests() {
 
   // Initialize DB in test environment
   process.env.DB_TYPE = "sqlite";
-  await initDatabase();
+  delete process.env.DATABASE_URL;
+  await initDatabase("sqlite");
 
   let adminToken = "";
   let adminOrgId = "";

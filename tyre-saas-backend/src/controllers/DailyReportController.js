@@ -1,3 +1,4 @@
+
 const { getOne, query, execute, uuid } = require("../config/db");
 const { AppError } = require("../middlewares/error");
 
@@ -85,7 +86,6 @@ async function resolveShop(req) {
     SELECT
       s.id,
       s.name,
-      
       s.organization_id
     FROM user_shops us
     INNER JOIN shops s
@@ -106,7 +106,6 @@ async function resolveShop(req) {
       SELECT
         s.id,
         s.name,
-        
         s.organization_id
       FROM shops s
       WHERE s.organization_id = ?
@@ -352,7 +351,7 @@ const DailyReportController = {
           SELECT
             dr.*,
             s.name AS shop_name
-        FROM daily_reports dr
+          FROM daily_reports dr
           LEFT JOIN shops s
             ON s.id = dr.shop_id
           WHERE dr.id = ?
@@ -469,7 +468,7 @@ const DailyReportController = {
         SELECT
           dr.*,
           s.name AS shop_name
-        FROM daily_reports dr
+          FROM daily_reports dr
         LEFT JOIN shops s
           ON s.id = dr.shop_id
         WHERE dr.id = ?
@@ -637,7 +636,7 @@ const DailyReportController = {
         SELECT
           dr.*,
           s.name AS shop_name
-        FROM daily_reports dr
+          FROM daily_reports dr
         LEFT JOIN shops s
           ON s.id = dr.shop_id
         WHERE dr.id = ?
@@ -725,7 +724,7 @@ const DailyReportController = {
         SELECT
           dr.*,
           s.name AS shop_name
-        FROM daily_reports dr
+          FROM daily_reports dr
         LEFT JOIN shops s
           ON s.id = dr.shop_id
         WHERE 1 = 1
