@@ -2349,7 +2349,7 @@ class AdminController {
 
       if (orgId) {
         sql += `
-        AND organization_id = ?
+        AND (organization_id = ? OR organization_id IS NULL)
       `;
 
         params.push(orgId);

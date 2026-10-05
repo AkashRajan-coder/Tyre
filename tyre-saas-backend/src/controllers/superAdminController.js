@@ -6,12 +6,14 @@ class SuperAdminController {
   // 1. Global SaaS Dashboard Overview
   static async getPlatformDashboard(req, res, next) {
     try {
-      const [orgsCount, shopsCount, adminsCount, employeesCount, enquiriesCount] = await Promise.all([
+      const [orgsCount, shopsCount, adminsCount, employeesCount, enquiriesCount, sizesCount, brandsCount] = await Promise.all([
         getOne("SELECT COUNT(*) as c FROM organizations WHERE is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM shops WHERE is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM users WHERE role = 'ADMIN' AND is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM users WHERE role = 'EMPLOYEE' AND is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM customer_enquiries WHERE is_deleted = 0"),
+        getOne("SELECT COUNT(*) as c FROM tyre_sizes"),
+        getOne("SELECT COUNT(*) as c FROM tyre_brands"),
       ]);
 
       const organizations = await query(
@@ -38,6 +40,8 @@ class SuperAdminController {
             totalBusinessAdmins: parseInt(adminsCount?.c || 0, 10),
             totalEmployees: parseInt(employeesCount?.c || 0, 10),
             totalEnquiries: parseInt(enquiriesCount?.c || 0, 10),
+            totalTyreSizes: parseInt(sizesCount?.c || 0, 10),
+            totalTyreBrands: parseInt(brandsCount?.c || 0, 10),
           },
           organizations,
         },
@@ -428,6 +432,734 @@ static async activateBusinessAdmin(req, res, next) {
 
       await execute("DELETE FROM users WHERE id = ?", [id]);
       res.json({ success: true, message: "Business Admin deleted permanently" });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Global Master Tyre Sizes Management
+  // -------------------------------------------------------------
+
+  static async listTyreSizes(req, res, next) {
+    try {
+      const { organizationId } = req.query;
+
+      let sql = `
+        SELECT ts.id, ts.size, ts.organization_id, ts.is_active, ts.created_at,
+               o.name as organization_name, o.slug as organization_slug
+        FROM tyre_sizes ts
+        LEFT JOIN organizations o ON o.id = ts.organization_id
+        WHERE 1 = 1
+      `;
+      const params = [];
+
+      if (organizationId === "GLOBAL") {
+        sql += " AND ts.organization_id IS NULL";
+      } else if (organizationId) {
+        sql += " AND ts.organization_id = ?";
+        params.push(organizationId);
+      }
+
+      sql += " ORDER BY ts.size ASC";
+
+      const sizes = await query(sql, params);
+      res.json({ success: true, data: sizes });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async bulkCreateTyreSizes(req, res, next) {
+    try {
+      const { rawInput, sizes: inputSizes, organizationId } = req.body;
+
+      let candidateSizes = [];
+
+      if (Array.isArray(inputSizes)) {
+        candidateSizes = inputSizes;
+      } else if (typeof rawInput === "string" && rawInput.trim()) {
+        // Split by lines or commas or semicolons
+        const lines = rawInput.split(/[\r\n,;]+/);
+        for (const line of lines) {
+          // Strip numbering, bullets (e.g. "1. ", "2) ", "- ", "* ")
+          let cleaned = line.replace(/^\s*(?:\d+[\.\)\-\:]|[-*•])\s*/i, "").trim();
+          // Normalize internal whitespace
+          cleaned = cleaned.replace(/\s+/g, " ");
+          if (cleaned.length >= 2) {
+            candidateSizes.push(cleaned);
+          }
+        }
+      }
+
+      if (!candidateSizes.length) {
+        throw new AppError("No valid tyre sizes provided. Please enter at least one tyre size.", 400);
+      }
+
+      // Deduplicate case-insensitively
+      const uniqueMap = new Map();
+      for (const item of candidateSizes) {
+        const key = item.toLowerCase().replace(/\s+/g, "");
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, item);
+        }
+      }
+
+      const deduplicated = Array.from(uniqueMap.values());
+      const now = new Date().toISOString();
+      const targetOrgId = organizationId || null;
+
+      // Fetch existing sizes for this scope
+      const existingRows = targetOrgId
+        ? await query("SELECT size FROM tyre_sizes WHERE organization_id = ?", [targetOrgId])
+        : await query("SELECT size FROM tyre_sizes WHERE organization_id IS NULL");
+
+      const existingSet = new Set(
+        existingRows.map((r) => (r.size || "").toLowerCase().replace(/\s+/g, ""))
+      );
+
+      const inserted = [];
+      const skipped = [];
+
+      for (const sizeText of deduplicated) {
+        const key = sizeText.toLowerCase().replace(/\s+/g, "");
+        if (existingSet.has(key)) {
+          skipped.push(sizeText);
+          continue;
+        }
+
+        const id = uuid();
+        await execute(
+          `INSERT INTO tyre_sizes (id, organization_id, size, is_active, created_at, created_by, last_modified_at, last_modified_by)
+           VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+          [id, targetOrgId, sizeText, now, req.user.id, now, req.user.id]
+        );
+
+        existingSet.add(key);
+        inserted.push({ id, size: sizeText, organizationId: targetOrgId });
+      }
+
+      res.status(201).json({
+        success: true,
+        message: `Processed ${deduplicated.length} tyre sizes: ${inserted.length} added successfully, ${skipped.length} already existed.`,
+        data: {
+          totalProcessed: deduplicated.length,
+          insertedCount: inserted.length,
+          skippedCount: skipped.length,
+          inserted,
+          skipped,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async toggleTyreSizeStatus(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+
+      const size = await getOne("SELECT id, size, is_active FROM tyre_sizes WHERE id = ?", [id]);
+      if (!size) {
+        throw new AppError("Tyre size not found", 404);
+      }
+
+      const newStatus = isActive !== undefined ? (isActive ? 1 : 0) : (size.is_active ? 0 : 1);
+      const now = new Date().toISOString();
+
+      await execute(
+        "UPDATE tyre_sizes SET is_active = ?, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+        [newStatus, now, req.user.id, id]
+      );
+
+      res.json({
+        success: true,
+        message: `Tyre size "${size.size}" is now ${newStatus ? "active" : "inactive"}.`,
+        data: { id, isActive: newStatus === 1 },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async permanentDeleteTyreSizeIds(sizeIds) {
+    if (!Array.isArray(sizeIds) || !sizeIds.length) return;
+
+    for (const sizeId of sizeIds) {
+      // 1. Safely unlink from customer_enquiries
+      await execute("UPDATE customer_enquiries SET tyre_size_id = NULL WHERE tyre_size_id = ?", [sizeId]);
+
+      // 2. Find all products associated with this size and clean their dependent foreign keys
+      const products = await query("SELECT id FROM tyre_products WHERE tyre_size_id = ?", [sizeId]);
+      for (const prod of products) {
+        // Unlink sale_items (nullable foreign key)
+        await execute("UPDATE sale_items SET tyre_product_id = NULL WHERE tyre_product_id = ?", [prod.id]);
+        // Remove enquiry tyre options
+        await execute("DELETE FROM enquiry_tyre_options WHERE tyre_product_id = ?", [prod.id]);
+        // Delete product
+        await execute("DELETE FROM tyre_products WHERE id = ?", [prod.id]);
+      }
+
+      // Cleanup any remaining products
+      await execute("DELETE FROM tyre_products WHERE tyre_size_id = ?", [sizeId]);
+
+      // 3. Permanently delete the tyre size itself
+      await execute("DELETE FROM tyre_sizes WHERE id = ?", [sizeId]);
+    }
+  }
+
+  static async deleteTyreSize(req, res, next) {
+    try {
+      const { id } = req.params;
+      const isForce = req.query.unlinkAndForceDelete === "true" || req.query.force === "true";
+
+      const size = await getOne("SELECT id, size FROM tyre_sizes WHERE id = ?", [id]);
+      if (!size) {
+        throw new AppError("Tyre size not found", 404);
+      }
+
+      // Check if size is in use by enquiries or products
+      const [inUseEnquiry, inUseProduct] = await Promise.all([
+        getOne("SELECT COUNT(*) as c FROM customer_enquiries WHERE tyre_size_id = ?", [id]),
+        getOne("SELECT COUNT(*) as c FROM tyre_products WHERE tyre_size_id = ?", [id]),
+      ]);
+
+      const enquiryCount = parseInt(inUseEnquiry?.c || 0, 10);
+      const productCount = parseInt(inUseProduct?.c || 0, 10);
+
+      const now = new Date().toISOString();
+
+      const targetSizeId = req.query.targetSizeId || req.body?.targetSizeId;
+      if (targetSizeId) {
+        const target = await getOne("SELECT id, size FROM tyre_sizes WHERE id = ?", [targetSizeId]);
+        if (!target) throw new AppError("Target tyre size for reassignment not found", 404);
+
+        await execute("UPDATE customer_enquiries SET tyre_size_id = ? WHERE tyre_size_id = ?", [targetSizeId, id]);
+        await SuperAdminController.permanentDeleteTyreSizeIds([id]);
+
+        return res.json({
+          success: true,
+          action: "reassigned_and_deleted",
+          message: `Tyre size "${size.size}" deleted. All ${enquiryCount} enquiry references migrated to "${target.size}".`
+        });
+      }
+
+      if (isForce) {
+        await SuperAdminController.permanentDeleteTyreSizeIds([id]);
+
+        return res.json({
+          success: true,
+          action: "deleted_forced",
+          message: `Tyre size "${size.size}" permanently deleted from database (unlinked from ${enquiryCount} enquiries).`
+        });
+      }
+
+      if (enquiryCount > 0 || productCount > 0) {
+        // Safe soft-deactivation to preserve foreign key integrity
+        await execute(
+          "UPDATE tyre_sizes SET is_active = 0, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+          [now, req.user.id, id]
+        );
+
+        return res.json({
+          success: true,
+          action: "deactivated",
+          message: `Tyre size "${size.size}" is linked to existing enquiries/products. It has been deactivated (hidden from new selections) to protect your historical records.`
+        });
+      }
+
+      // Not in use, safe to delete permanently
+      await SuperAdminController.permanentDeleteTyreSizeIds([id]);
+      res.json({
+        success: true,
+        action: "deleted",
+        message: `Tyre size "${size.size}" deleted permanently.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async cleanupUnusedTyreSizes(req, res, next) {
+    try {
+      const unused = await query(`
+        SELECT ts.id, ts.size
+        FROM tyre_sizes ts
+        WHERE NOT EXISTS (SELECT 1 FROM customer_enquiries ce WHERE ce.tyre_size_id = ts.id)
+          AND NOT EXISTS (SELECT 1 FROM tyre_products tp WHERE tp.tyre_size_id = ts.id)
+      `);
+
+      if (!unused.length) {
+        return res.json({
+          success: true,
+          deletedCount: 0,
+          message: "No unused tyre sizes found. All catalogue sizes are actively referenced."
+        });
+      }
+
+      const ids = unused.map(u => u.id);
+      await SuperAdminController.permanentDeleteTyreSizeIds(ids);
+
+      res.json({
+        success: true,
+        deletedCount: ids.length,
+        message: `Cleaned up ${ids.length} unused tyre size(s) successfully.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async bulkActionTyreSizes(req, res, next) {
+    try {
+      const { ids, action } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        throw new AppError("No tyre sizes selected", 400);
+      }
+
+      const now = new Date().toISOString();
+
+      if (action === "force_delete") {
+        await SuperAdminController.permanentDeleteTyreSizeIds(ids);
+        return res.json({
+          success: true,
+          action: "force_delete",
+          message: `Successfully force-deleted ${ids.length} tyre size(s) permanently.`
+        });
+      }
+
+      if (action === "deactivate") {
+        for (const id of ids) {
+          await execute(
+            "UPDATE tyre_sizes SET is_active = 0, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+            [now, req.user.id, id]
+          );
+        }
+        return res.json({
+          success: true,
+          action: "deactivate",
+          message: `Successfully deactivated ${ids.length} tyre size(s).`
+        });
+      }
+
+      if (action === "activate") {
+        for (const id of ids) {
+          await execute(
+            "UPDATE tyre_sizes SET is_active = 1, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+            [now, req.user.id, id]
+          );
+        }
+        return res.json({
+          success: true,
+          action: "activate",
+          message: `Successfully activated ${ids.length} tyre size(s).`
+        });
+      }
+
+      throw new AppError("Invalid bulk action. Allowed: force_delete, deactivate, activate", 400);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteOrganizationTyreSizes(req, res, next) {
+    try {
+      const { organizationId } = req.params;
+
+      let orgName = "Global Master (All Orgs)";
+      let sizes = [];
+
+      if (!organizationId || organizationId === "global" || organizationId === "GLOBAL" || organizationId === "null") {
+        sizes = await query("SELECT id, size FROM tyre_sizes WHERE organization_id IS NULL");
+      } else {
+        const org = await getOne("SELECT id, name FROM organizations WHERE id = ?", [organizationId]);
+        if (!org) {
+          throw new AppError("Organization not found", 404);
+        }
+        orgName = org.name;
+        sizes = await query("SELECT id, size FROM tyre_sizes WHERE organization_id = ?", [organizationId]);
+      }
+
+      if (!sizes.length) {
+        return res.json({
+          success: true,
+          deletedCount: 0,
+          message: `No tyre sizes found for "${orgName}".`
+        });
+      }
+
+      const sizeIds = sizes.map((s) => s.id);
+      await SuperAdminController.permanentDeleteTyreSizeIds(sizeIds);
+
+      res.json({
+        success: true,
+        deletedCount: sizes.length,
+        organizationName: orgName,
+        message: `Successfully deleted all ${sizes.length} tyre size(s) for organization "${orgName}".`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Tyre Brands Master Catalog (Global & Organization-Specific)
+  // -------------------------------------------------------------
+
+  static async permanentDeleteTyreBrandIds(brandIds) {
+    if (!Array.isArray(brandIds) || !brandIds.length) return;
+
+    for (const brandId of brandIds) {
+      // 1. Safely unlink from customer_enquiries
+      await execute("UPDATE customer_enquiries SET tyre_brand_id = NULL WHERE tyre_brand_id = ?", [brandId]);
+
+      // 2. Find linked tyre_products
+      const products = await query("SELECT id FROM tyre_products WHERE tyre_brand_id = ?", [brandId]);
+      for (const prod of products) {
+        // Unlink sale_items (nullable foreign key)
+        await execute("UPDATE sale_items SET tyre_product_id = NULL WHERE tyre_product_id = ?", [prod.id]);
+        // Remove enquiry tyre options
+        await execute("DELETE FROM enquiry_tyre_options WHERE tyre_product_id = ?", [prod.id]);
+        // Delete tyre product
+        await execute("DELETE FROM tyre_products WHERE id = ?", [prod.id]);
+      }
+
+      // Cleanup any remaining products for this brand
+      await execute("DELETE FROM tyre_products WHERE tyre_brand_id = ?", [brandId]);
+
+      // 3. Delete the tyre brand itself
+      await execute("DELETE FROM tyre_brands WHERE id = ?", [brandId]);
+    }
+  }
+
+  static async listTyreBrands(req, res, next) {
+    try {
+      const { organizationId, scope } = req.query;
+
+      let sql = `
+        SELECT tb.id, tb.organization_id, tb.name, tb.is_active, tb.created_at,
+               o.name as organization_name, o.slug as organization_slug
+        FROM tyre_brands tb
+        LEFT JOIN organizations o ON o.id = tb.organization_id
+        WHERE 1 = 1
+      `;
+      const params = [];
+
+      if (scope === "global") {
+        sql += " AND tb.organization_id IS NULL";
+      } else if (scope === "org" && organizationId) {
+        sql += " AND tb.organization_id = ?";
+        params.push(organizationId);
+      } else if (organizationId) {
+        sql += " AND (tb.organization_id = ? OR tb.organization_id IS NULL)";
+        params.push(organizationId);
+      }
+
+      sql += " ORDER BY tb.name ASC";
+
+      const rows = await query(sql, params);
+      res.json({ success: true, count: rows.length, data: rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async bulkCreateTyreBrands(req, res, next) {
+    try {
+      const { rawInput, brands: inputBrands, organizationId } = req.body;
+
+      let candidateBrands = [];
+
+      if (Array.isArray(inputBrands)) {
+        candidateBrands = inputBrands;
+      } else if (typeof rawInput === "string" && rawInput.trim()) {
+        const lines = rawInput.split(/[\r\n,;]+/);
+        for (const line of lines) {
+          let cleaned = line.replace(/^\s*(?:\d+[\.\)\-\:]|[-*•])\s*/i, "").trim();
+          cleaned = cleaned.replace(/\s+/g, " ");
+          if (cleaned.length >= 2) {
+            candidateBrands.push(cleaned);
+          }
+        }
+      }
+
+      if (!candidateBrands.length) {
+        throw new AppError("No valid tyre brands provided. Please enter at least one brand name.", 400);
+      }
+
+      // Deduplicate case-insensitively
+      const uniqueMap = new Map();
+      for (const item of candidateBrands) {
+        const key = item.toLowerCase().replace(/\s+/g, "");
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, item);
+        }
+      }
+
+      const deduplicated = Array.from(uniqueMap.values());
+      const now = new Date().toISOString();
+      const targetOrgId = organizationId || null;
+
+      const existingRows = targetOrgId
+        ? await query("SELECT name FROM tyre_brands WHERE organization_id = ?", [targetOrgId])
+        : await query("SELECT name FROM tyre_brands WHERE organization_id IS NULL");
+
+      const existingSet = new Set(
+        existingRows.map((r) => (r.name || "").toLowerCase().replace(/\s+/g, ""))
+      );
+
+      const inserted = [];
+      const skipped = [];
+
+      for (const brandText of deduplicated) {
+        const key = brandText.toLowerCase().replace(/\s+/g, "");
+        if (existingSet.has(key)) {
+          skipped.push(brandText);
+          continue;
+        }
+
+        const id = uuid();
+        await execute(
+          `INSERT INTO tyre_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by)
+           VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+          [id, targetOrgId, brandText, now, req.user.id, now, req.user.id]
+        );
+
+        existingSet.add(key);
+        inserted.push({ id, name: brandText, organizationId: targetOrgId });
+      }
+
+      res.status(201).json({
+        success: true,
+        message: `Processed ${deduplicated.length} tyre brands: ${inserted.length} added successfully, ${skipped.length} already existed.`,
+        data: {
+          totalProcessed: deduplicated.length,
+          insertedCount: inserted.length,
+          skippedCount: skipped.length,
+          inserted,
+          skipped,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async toggleTyreBrandStatus(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+
+      const brand = await getOne("SELECT id, name, is_active FROM tyre_brands WHERE id = ?", [id]);
+      if (!brand) {
+        throw new AppError("Tyre brand not found", 404);
+      }
+
+      const newStatus = isActive !== undefined ? (isActive ? 1 : 0) : (brand.is_active ? 0 : 1);
+      const now = new Date().toISOString();
+
+      await execute(
+        "UPDATE tyre_brands SET is_active = ?, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+        [newStatus, now, req.user.id, id]
+      );
+
+      res.json({
+        success: true,
+        message: `Tyre brand "${brand.name}" is now ${newStatus ? "active" : "inactive"}.`,
+        data: { id, isActive: newStatus === 1 },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteTyreBrand(req, res, next) {
+    try {
+      const { id } = req.params;
+      const isForce = req.query.unlinkAndForceDelete === "true" || req.query.force === "true";
+
+      const brand = await getOne("SELECT id, name FROM tyre_brands WHERE id = ?", [id]);
+      if (!brand) {
+        throw new AppError("Tyre brand not found", 404);
+      }
+
+      const [inUseEnquiry, inUseProduct] = await Promise.all([
+        getOne("SELECT COUNT(*) as c FROM customer_enquiries WHERE tyre_brand_id = ?", [id]),
+        getOne("SELECT COUNT(*) as c FROM tyre_products WHERE tyre_brand_id = ?", [id]),
+      ]);
+
+      const enquiryCount = parseInt(inUseEnquiry?.c || 0, 10);
+      const productCount = parseInt(inUseProduct?.c || 0, 10);
+      const now = new Date().toISOString();
+
+      const targetBrandId = req.query.targetBrandId || req.body?.targetBrandId;
+      if (targetBrandId) {
+        const target = await getOne("SELECT id, name FROM tyre_brands WHERE id = ?", [targetBrandId]);
+        if (!target) throw new AppError("Target tyre brand for reassignment not found", 404);
+
+        await execute("UPDATE customer_enquiries SET tyre_brand_id = ? WHERE tyre_brand_id = ?", [targetBrandId, id]);
+        await SuperAdminController.permanentDeleteTyreBrandIds([id]);
+
+        return res.json({
+          success: true,
+          action: "reassigned_and_deleted",
+          message: `Tyre brand "${brand.name}" deleted. All ${enquiryCount} enquiry references migrated to "${target.name}".`
+        });
+      }
+
+      if (isForce) {
+        await SuperAdminController.permanentDeleteTyreBrandIds([id]);
+
+        return res.json({
+          success: true,
+          action: "deleted_forced",
+          message: `Tyre brand "${brand.name}" permanently deleted from database (unlinked from ${enquiryCount} enquiries).`
+        });
+      }
+
+      if (enquiryCount > 0 || productCount > 0) {
+        await execute(
+          "UPDATE tyre_brands SET is_active = 0, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+          [now, req.user.id, id]
+        );
+
+        return res.json({
+          success: true,
+          action: "deactivated",
+          message: `Tyre brand "${brand.name}" is linked to existing enquiries/products. It has been deactivated (hidden from new selections) to protect your historical records.`
+        });
+      }
+
+      // Not in use, safe to delete permanently
+      await SuperAdminController.permanentDeleteTyreBrandIds([id]);
+      res.json({
+        success: true,
+        action: "deleted",
+        message: `Tyre brand "${brand.name}" deleted permanently.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async cleanupUnusedTyreBrands(req, res, next) {
+    try {
+      const unused = await query(`
+        SELECT tb.id, tb.name
+        FROM tyre_brands tb
+        WHERE NOT EXISTS (SELECT 1 FROM customer_enquiries ce WHERE ce.tyre_brand_id = tb.id)
+          AND NOT EXISTS (SELECT 1 FROM tyre_products tp WHERE tp.tyre_brand_id = tb.id)
+      `);
+
+      if (!unused.length) {
+        return res.json({
+          success: true,
+          deletedCount: 0,
+          message: "No unused tyre brands found. All catalogue brands are actively referenced."
+        });
+      }
+
+      const ids = unused.map(u => u.id);
+      await SuperAdminController.permanentDeleteTyreBrandIds(ids);
+
+      res.json({
+        success: true,
+        deletedCount: ids.length,
+        message: `Cleaned up ${ids.length} unused tyre brand(s) successfully.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async bulkActionTyreBrands(req, res, next) {
+    try {
+      const { ids, action } = req.body;
+      if (!Array.isArray(ids) || !ids.length) {
+        throw new AppError("No tyre brands selected", 400);
+      }
+
+      const now = new Date().toISOString();
+
+      if (action === "force_delete") {
+        await SuperAdminController.permanentDeleteTyreBrandIds(ids);
+        return res.json({
+          success: true,
+          action: "force_delete",
+          message: `Successfully force-deleted ${ids.length} tyre brand(s) permanently.`
+        });
+      }
+
+      if (action === "deactivate") {
+        for (const id of ids) {
+          await execute(
+            "UPDATE tyre_brands SET is_active = 0, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+            [now, req.user.id, id]
+          );
+        }
+        return res.json({
+          success: true,
+          action: "deactivate",
+          message: `Successfully deactivated ${ids.length} tyre brand(s).`
+        });
+      }
+
+      if (action === "activate") {
+        for (const id of ids) {
+          await execute(
+            "UPDATE tyre_brands SET is_active = 1, last_modified_at = ?, last_modified_by = ? WHERE id = ?",
+            [now, req.user.id, id]
+          );
+        }
+        return res.json({
+          success: true,
+          action: "activate",
+          message: `Successfully activated ${ids.length} tyre brand(s).`
+        });
+      }
+
+      throw new AppError("Invalid bulk action. Allowed: force_delete, deactivate, activate", 400);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteOrganizationTyreBrands(req, res, next) {
+    try {
+      const { organizationId } = req.params;
+
+      let orgName = "Global Master (All Orgs)";
+      let brands = [];
+
+      if (!organizationId || organizationId === "global" || organizationId === "GLOBAL" || organizationId === "null") {
+        brands = await query("SELECT id, name FROM tyre_brands WHERE organization_id IS NULL");
+      } else {
+        const org = await getOne("SELECT id, name FROM organizations WHERE id = ?", [organizationId]);
+        if (!org) {
+          throw new AppError("Organization not found", 404);
+        }
+        orgName = org.name;
+        brands = await query("SELECT id, name FROM tyre_brands WHERE organization_id = ?", [organizationId]);
+      }
+
+      if (!brands.length) {
+        return res.json({
+          success: true,
+          deletedCount: 0,
+          message: `No tyre brands found for "${orgName}".`
+        });
+      }
+
+      const brandIds = brands.map((b) => b.id);
+      await SuperAdminController.permanentDeleteTyreBrandIds(brandIds);
+
+      res.json({
+        success: true,
+        deletedCount: brands.length,
+        organizationName: orgName,
+        message: `Successfully deleted all ${brands.length} tyre brand(s) for organization "${orgName}".`
+      });
     } catch (error) {
       next(error);
     }

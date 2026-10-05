@@ -84,7 +84,7 @@ class TyreProductController {
           SELECT id
           FROM tyre_sizes
           WHERE id = ?
-            AND organization_id = ?
+            AND (organization_id = ? OR organization_id IS NULL)
             AND is_active = 1
           LIMIT 1
         `,
@@ -111,7 +111,7 @@ class TyreProductController {
           SELECT id
           FROM tyre_brands
           WHERE id = ?
-            AND organization_id = ?
+            AND (organization_id = ? OR organization_id IS NULL)
             AND is_active = 1
           LIMIT 1
         `,
@@ -354,7 +354,7 @@ class TyreProductController {
             SELECT id
             FROM tyre_sizes
             WHERE id = ?
-              AND organization_id = ?
+              AND (organization_id = ? OR organization_id IS NULL)
               AND is_active = 1
             LIMIT 1
           `,
@@ -378,7 +378,7 @@ class TyreProductController {
             SELECT id
             FROM tyre_brands
             WHERE id = ?
-              AND organization_id = ?
+              AND (organization_id = ? OR organization_id IS NULL)
               AND is_active = 1
             LIMIT 1
           `,

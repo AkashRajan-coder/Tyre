@@ -29,4 +29,24 @@ router.patch(
   SuperAdminController.activateBusinessAdmin
 );
 
+// Global Master Tyre Sizes Management
+router.get("/tyre-sizes", SuperAdminController.listTyreSizes);
+router.post("/tyre-sizes/bulk", SuperAdminController.bulkCreateTyreSizes);
+router.post("/tyre-sizes/bulk-action", SuperAdminController.bulkActionTyreSizes);
+router.post("/tyre-sizes/cleanup-unused", SuperAdminController.cleanupUnusedTyreSizes);
+router.delete("/tyre-sizes/organization/:organizationId", SuperAdminController.deleteOrganizationTyreSizes);
+router.delete("/organizations/:organizationId/tyre-sizes", SuperAdminController.deleteOrganizationTyreSizes);
+router.patch("/tyre-sizes/:id/status", SuperAdminController.toggleTyreSizeStatus);
+router.delete("/tyre-sizes/:id", SuperAdminController.deleteTyreSize);
+
+// Global Master Tyre Brands Management
+router.get("/tyre-brands", SuperAdminController.listTyreBrands);
+router.post("/tyre-brands/bulk", SuperAdminController.bulkCreateTyreBrands);
+router.post("/tyre-brands/bulk-action", SuperAdminController.bulkActionTyreBrands);
+router.post("/tyre-brands/cleanup-unused", SuperAdminController.cleanupUnusedTyreBrands);
+router.delete("/tyre-brands/organization/:organizationId", SuperAdminController.deleteOrganizationTyreBrands);
+router.delete("/organizations/:organizationId/tyre-brands", SuperAdminController.deleteOrganizationTyreBrands);
+router.patch("/tyre-brands/:id/status", SuperAdminController.toggleTyreBrandStatus);
+router.delete("/tyre-brands/:id", SuperAdminController.deleteTyreBrand);
+
 module.exports = router;

@@ -293,4 +293,12 @@ router.get(
   "/daily-reports",
   DailyReportController.getDailyReports
 );
+router.post(
+  "/daily-reports",
+  DailyReportController.saveDailyReport
+);
+router.put(
+  "/daily-reports",
+  DailyReportController.updateDailyReport
+);
 module.exports = router;

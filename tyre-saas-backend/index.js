@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const path = require("path");
 const cors = require("cors");
 const helmet = require("helmet");
 const { apiLimiter } = require("./src/middlewares/rateLimiter");
@@ -55,11 +56,18 @@ app.get("/health", (req, res) => {
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/docs", (req, res) => res.redirect("/api/docs"));
 
+// Static files (Super Admin portal UI)
+app.use(express.static(path.join(__dirname, "public")));
+app.get("/superadmin", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "superadmin.html"));
+});
+
 // Root welcome route
 app.get("/", (req, res) => {
   res.json({
     name: "Tyre Shop SaaS Backend (Node.js/JavaScript)",
     version: "1.0.0",
+    superAdminPortal: "/superadmin",
     swaggerDocs: "/api/docs",
     health: "/health",
     endpoints: {

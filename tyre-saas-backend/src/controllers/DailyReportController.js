@@ -27,189 +27,351 @@ function validateAmount(value) {
   return amount;
 }
 
-async function getEmployeeShop(req) {
+/**
+ * Resolves shop from:
+ * 1. Explicit shopId in body or query (checking tenant organization & employee assignment)
+ * 2. Assigned shop from user_shops table
+ * 3. Fallback to primary active shop in user's organization (for Admin or unassigned staff)
+ */
+async function resolveShop(req) {
   const userId = req.user.id;
+  const userRole = req.user.role;
   const organizationId = req.user.organizationId;
 
-  const shop = await getOne(
+  const explicitShopId =
+    req.body?.shopId ||
+    req.body?.shop_id ||
+    req.query?.shopId ||
+    req.query?.shop_id;
+
+  if (explicitShopId) {
+    const shop = await getOne(
+      "SELECT id, name, organization_id FROM shops WHERE id = ? AND is_active = 1",
+      [explicitShopId]
+    );
+
+    if (!shop) {
+      throw new AppError("Shop not found or inactive", 404);
+    }
+
+    if (userRole !== "SUPER_ADMIN" && shop.organization_id !== organizationId) {
+      throw new AppError("Access denied: Shop belongs to another organization", 403);
+    }
+
+    if (userRole === "EMPLOYEE") {
+      const assignedCount = await getOne(
+        "SELECT COUNT(*) as count FROM user_shops WHERE user_id = ?",
+        [userId]
+      );
+      const hasAssignments = Number(assignedCount?.count || 0) > 0;
+
+      if (hasAssignments) {
+        const isAssigned = await getOne(
+          "SELECT id FROM user_shops WHERE user_id = ? AND shop_id = ?",
+          [userId, explicitShopId]
+        );
+        if (!isAssigned) {
+          throw new AppError("Access denied: You are not assigned to this shop", 403);
+        }
+      }
+    }
+
+    return shop;
+  }
+
+  // Fallback 1: user_shops table
+  let shop = await getOne(
     `
     SELECT
       s.id,
       s.name,
+      
       s.organization_id
     FROM user_shops us
     INNER JOIN shops s
       ON s.id = us.shop_id
     WHERE us.user_id = ?
-      AND s.organization_id = ?
+      AND (s.organization_id = ? OR ? IS NULL)
       AND s.is_active = 1
     ORDER BY s.created_at ASC
     LIMIT 1
     `,
-    [userId, organizationId]
+    [userId, organizationId, organizationId]
   );
+
+  // Fallback 2: first active shop in organization (e.g. for ADMIN or unassigned staff)
+  if (!shop && organizationId) {
+    shop = await getOne(
+      `
+      SELECT
+        s.id,
+        s.name,
+        
+        s.organization_id
+      FROM shops s
+      WHERE s.organization_id = ?
+        AND s.is_active = 1
+      ORDER BY s.created_at ASC
+      LIMIT 1
+      `,
+      [organizationId]
+    );
+  }
 
   if (!shop) {
     throw new AppError(
-      "No active shop assigned to this employee",
+      "No active shop found for this organization. Please specify a shopId.",
       404
     );
   }
 
   return shop;
 }
-async function getTodayReport(shopId, organizationId, reportDate) {
+
+function resolveReportDate(bodyDate) {
+  if (bodyDate) {
+    if (typeof bodyDate === "string") {
+      return bodyDate.split("T")[0];
+    }
+    if (bodyDate instanceof Date) {
+      return bodyDate.toISOString().split("T")[0];
+    }
+  }
+  return new Date().toISOString().split("T")[0];
+}
+
+function extractReportPayload(body) {
+  const {
+    amount,
+    totalAmount,
+    tyre = {},
+    twoWheelerEnquiry = {},
+    twoWheelerAlignment = {},
+    wheelAlignment = {},
+    commercialTyre = {},
+    roWater = {},
+    above17Inch = {},
+  } = body || {};
+
+  const rawAmount = amount !== undefined ? amount : (totalAmount !== undefined ? totalAmount : 0);
+  const reportAmount = validateAmount(rawAmount);
+
+  const tyreCustomer = validateQuantity(
+    tyre.customer ?? body.tyreCustomerQuantity ?? body.tyre_customer_quantity ?? 0,
+    "tyre.customer"
+  );
+  const tyreMechanic = validateQuantity(
+    tyre.mechanic ?? body.tyreMechanicQuantity ?? body.tyre_mechanic_quantity ?? 0,
+    "tyre.mechanic"
+  );
+
+  const twoWheelerEnquiryCustomer = validateQuantity(
+    twoWheelerEnquiry.customer ?? body.twoWheelerEnquiryCustomerQuantity ?? body.two_wheeler_enquiry_customer_quantity ?? 0,
+    "twoWheelerEnquiry.customer"
+  );
+  const twoWheelerEnquiryMechanic = validateQuantity(
+    twoWheelerEnquiry.mechanic ?? body.twoWheelerEnquiryMechanicQuantity ?? body.two_wheeler_enquiry_mechanic_quantity ?? 0,
+    "twoWheelerEnquiry.mechanic"
+  );
+
+  const twoWheelerAlignmentCustomer = validateQuantity(
+    twoWheelerAlignment.customer ?? body.twoWheelerAlignmentCustomerQuantity ?? body.two_wheeler_alignment_customer_quantity ?? 0,
+    "twoWheelerAlignment.customer"
+  );
+  const twoWheelerAlignmentMechanic = validateQuantity(
+    twoWheelerAlignment.mechanic ?? body.twoWheelerAlignmentMechanicQuantity ?? body.two_wheeler_alignment_mechanic_quantity ?? 0,
+    "twoWheelerAlignment.mechanic"
+  );
+
+  const wheelAlignmentCustomer = validateQuantity(
+    wheelAlignment.customer ?? body.wheelAlignmentCustomerQuantity ?? body.wheel_alignment_customer_quantity ?? 0,
+    "wheelAlignment.customer"
+  );
+  const wheelAlignmentMechanic = validateQuantity(
+    wheelAlignment.mechanic ?? body.wheelAlignmentMechanicQuantity ?? body.wheel_alignment_mechanic_quantity ?? 0,
+    "wheelAlignment.mechanic"
+  );
+
+  const commercialTyreCustomer = validateQuantity(
+    commercialTyre.customer ?? body.commercialTyreCustomerQuantity ?? body.commercial_tyre_customer_quantity ?? 0,
+    "commercialTyre.customer"
+  );
+  const commercialTyreMechanic = validateQuantity(
+    commercialTyre.mechanic ?? body.commercialTyreMechanicQuantity ?? body.commercial_tyre_mechanic_quantity ?? 0,
+    "commercialTyre.mechanic"
+  );
+
+  const roWaterCustomer = validateQuantity(
+    roWater.customer ?? body.roWaterCustomerQuantity ?? body.ro_water_customer_quantity ?? 0,
+    "roWater.customer"
+  );
+  const roWaterMechanic = validateQuantity(
+    roWater.mechanic ?? body.roWaterMechanicQuantity ?? body.ro_water_mechanic_quantity ?? 0,
+    "roWater.mechanic"
+  );
+
+  const above17InchCustomer = validateQuantity(
+    above17Inch.customer ?? body.above17InchCustomerQuantity ?? body.above_17_inch_customer_quantity ?? 0,
+    "above17Inch.customer"
+  );
+  const above17InchMechanic = validateQuantity(
+    above17Inch.mechanic ?? body.above17InchMechanicQuantity ?? body.above_17_inch_mechanic_quantity ?? 0,
+    "above17Inch.mechanic"
+  );
+
+  return {
+    reportAmount,
+    tyreCustomer,
+    tyreMechanic,
+    twoWheelerEnquiryCustomer,
+    twoWheelerEnquiryMechanic,
+    twoWheelerAlignmentCustomer,
+    twoWheelerAlignmentMechanic,
+    wheelAlignmentCustomer,
+    wheelAlignmentMechanic,
+    commercialTyreCustomer,
+    commercialTyreMechanic,
+    roWaterCustomer,
+    roWaterMechanic,
+    above17InchCustomer,
+    above17InchMechanic,
+  };
+}
+
+async function getExistingReport(shopId, organizationId, reportDate, reportId) {
+  if (reportId) {
+    const reportById = await getOne(
+      `
+      SELECT *
+      FROM daily_reports
+      WHERE id = ? AND (organization_id = ? OR ? IS NULL)
+      `,
+      [reportId, organizationId, organizationId]
+    );
+    if (reportById) return reportById;
+  }
+
   return await getOne(
     `
     SELECT *
     FROM daily_reports
     WHERE shop_id = ?
       AND organization_id = ?
-      AND report_date = ?
+      AND (
+        report_date = ?
+        OR report_date::text LIKE ?
+      )
+    LIMIT 1
     `,
-    [shopId, organizationId, reportDate]
+    [shopId, organizationId, reportDate, `${reportDate}%`]
   );
 }
 
 const DailyReportController = {
 
   // ============================================================
-  // CREATE DAILY REPORT
+  // CREATE / UPSERT DAILY REPORT
   // ============================================================
 
   async saveDailyReport(req, res, next) {
     try {
-      const organizationId = req.user.organizationId;
+      const userRole = req.user.role;
+      const organizationId =
+        userRole === "SUPER_ADMIN"
+          ? req.body?.organizationId || req.user.organizationId
+          : req.user.organizationId;
 
-      if (!organizationId) {
-        throw new AppError(
-          "Employee organization is required",
-          400
-        );
+      if (!organizationId && userRole !== "SUPER_ADMIN") {
+        throw new AppError("Organization is required", 400);
       }
 
-      const shop = await getEmployeeShop(req);
+      const shop = await resolveShop(req);
+      const effectiveOrgId = organizationId || shop.organization_id;
+      const reportDate = resolveReportDate(req.body.reportDate || req.body.report_date);
+      const payload = extractReportPayload(req.body);
 
-      // Today's date
-      const reportDate = new Date()
-        .toISOString()
-        .split("T")[0];
-
-      const {
-        amount = 0,
-
-        tyre = {},
-        twoWheelerEnquiry = {},
-        twoWheelerAlignment = {},
-        wheelAlignment = {},
-        commercialTyre = {},
-        roWater = {},
-        above17Inch = {},
-      } = req.body;
-
-      // --------------------------------------------------------
-      // Validate amount
-      // --------------------------------------------------------
-
-      const reportAmount = validateAmount(amount);
-
-      // --------------------------------------------------------
-      // Validate all service quantities
-      // --------------------------------------------------------
-
-      const tyreCustomer = validateQuantity(
-        tyre.customer || 0,
-        "tyre.customer"
-      );
-
-      const tyreMechanic = validateQuantity(
-        tyre.mechanic || 0,
-        "tyre.mechanic"
-      );
-
-      const twoWheelerEnquiryCustomer = validateQuantity(
-        twoWheelerEnquiry.customer || 0,
-        "twoWheelerEnquiry.customer"
-      );
-
-      const twoWheelerEnquiryMechanic = validateQuantity(
-        twoWheelerEnquiry.mechanic || 0,
-        "twoWheelerEnquiry.mechanic"
-      );
-
-      const twoWheelerAlignmentCustomer = validateQuantity(
-        twoWheelerAlignment.customer || 0,
-        "twoWheelerAlignment.customer"
-      );
-
-      const twoWheelerAlignmentMechanic = validateQuantity(
-        twoWheelerAlignment.mechanic || 0,
-        "twoWheelerAlignment.mechanic"
-      );
-
-      const wheelAlignmentCustomer = validateQuantity(
-        wheelAlignment.customer || 0,
-        "wheelAlignment.customer"
-      );
-
-      const wheelAlignmentMechanic = validateQuantity(
-        wheelAlignment.mechanic || 0,
-        "wheelAlignment.mechanic"
-      );
-
-      const commercialTyreCustomer = validateQuantity(
-        commercialTyre.customer || 0,
-        "commercialTyre.customer"
-      );
-
-      const commercialTyreMechanic = validateQuantity(
-        commercialTyre.mechanic || 0,
-        "commercialTyre.mechanic"
-      );
-
-      const roWaterCustomer = validateQuantity(
-        roWater.customer || 0,
-        "roWater.customer"
-      );
-
-      const roWaterMechanic = validateQuantity(
-        roWater.mechanic || 0,
-        "roWater.mechanic"
-      );
-
-      const above17InchCustomer = validateQuantity(
-        above17Inch.customer || 0,
-        "above17Inch.customer"
-      );
-
-      const above17InchMechanic = validateQuantity(
-        above17Inch.mechanic || 0,
-        "above17Inch.mechanic"
-      );
-
-      // --------------------------------------------------------
-      // Check today's report already exists
-      // --------------------------------------------------------
-
-      const existingReport = await getTodayReport(
+      // Check if report already exists for this shop & date (or matching id)
+      const existingReport = await getExistingReport(
         shop.id,
-        organizationId,
-        reportDate
+        effectiveOrgId,
+        reportDate,
+        req.body.id
       );
+
+      const now = new Date().toISOString();
 
       if (existingReport) {
-        throw new AppError(
-          "Today's daily report already exists. Use PUT to add more quantities.",
-          409
+        // Upsert behavior: update the existing report with latest figures
+        await execute(
+          `
+          UPDATE daily_reports
+          SET
+            amount = ?,
+            tyre_customer_quantity = ?,
+            tyre_mechanic_quantity = ?,
+            two_wheeler_enquiry_customer_quantity = ?,
+            two_wheeler_enquiry_mechanic_quantity = ?,
+            two_wheeler_alignment_customer_quantity = ?,
+            two_wheeler_alignment_mechanic_quantity = ?,
+            wheel_alignment_customer_quantity = ?,
+            wheel_alignment_mechanic_quantity = ?,
+            commercial_tyre_customer_quantity = ?,
+            commercial_tyre_mechanic_quantity = ?,
+            ro_water_customer_quantity = ?,
+            ro_water_mechanic_quantity = ?,
+            above_17_inch_customer_quantity = ?,
+            above_17_inch_mechanic_quantity = ?,
+            last_modified_at = ?,
+            last_modified_by = ?
+          WHERE id = ?
+          `,
+          [
+            payload.reportAmount,
+            payload.tyreCustomer,
+            payload.tyreMechanic,
+            payload.twoWheelerEnquiryCustomer,
+            payload.twoWheelerEnquiryMechanic,
+            payload.twoWheelerAlignmentCustomer,
+            payload.twoWheelerAlignmentMechanic,
+            payload.wheelAlignmentCustomer,
+            payload.wheelAlignmentMechanic,
+            payload.commercialTyreCustomer,
+            payload.commercialTyreMechanic,
+            payload.roWaterCustomer,
+            payload.roWaterMechanic,
+            payload.above17InchCustomer,
+            payload.above17InchMechanic,
+            now,
+            req.user.id,
+            existingReport.id,
+          ]
         );
+
+        const updatedReport = await getOne(
+          `
+          SELECT
+            dr.*,
+            s.name AS shop_name
+        FROM daily_reports dr
+          LEFT JOIN shops s
+            ON s.id = dr.shop_id
+          WHERE dr.id = ?
+          `,
+          [existingReport.id]
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Daily report updated successfully",
+          data: updatedReport,
+        });
       }
 
       // --------------------------------------------------------
-      // Create report
+      // Create new report
       // --------------------------------------------------------
 
-      const id = uuid();
-      const now = new Date().toISOString();
+      const id = req.body.id || uuid();
 
       await execute(
         `
@@ -260,7 +422,6 @@ const DailyReportController = {
           ?, ?,
           ?, ?,
           ?, ?,
-          ?, ?,
 
           ?, ?,
           ?, ?
@@ -268,32 +429,32 @@ const DailyReportController = {
         `,
         [
           id,
-          organizationId,
+          effectiveOrgId,
           shop.id,
           reportDate,
 
-          reportAmount,
+          payload.reportAmount,
 
-          tyreCustomer,
-          tyreMechanic,
+          payload.tyreCustomer,
+          payload.tyreMechanic,
 
-          twoWheelerEnquiryCustomer,
-          twoWheelerEnquiryMechanic,
+          payload.twoWheelerEnquiryCustomer,
+          payload.twoWheelerEnquiryMechanic,
 
-          twoWheelerAlignmentCustomer,
-          twoWheelerAlignmentMechanic,
+          payload.twoWheelerAlignmentCustomer,
+          payload.twoWheelerAlignmentMechanic,
 
-          wheelAlignmentCustomer,
-          wheelAlignmentMechanic,
+          payload.wheelAlignmentCustomer,
+          payload.wheelAlignmentMechanic,
 
-          commercialTyreCustomer,
-          commercialTyreMechanic,
+          payload.commercialTyreCustomer,
+          payload.commercialTyreMechanic,
 
-          roWaterCustomer,
-          roWaterMechanic,
+          payload.roWaterCustomer,
+          payload.roWaterMechanic,
 
-          above17InchCustomer,
-          above17InchMechanic,
+          payload.above17InchCustomer,
+          payload.above17InchMechanic,
 
           now,
           req.user.id,
@@ -329,236 +490,147 @@ const DailyReportController = {
 
 
   // ============================================================
-  // UPDATE / ADD TO TODAY'S DAILY REPORT
+  // UPDATE / PUT DAILY REPORT
   // ============================================================
 
   async updateDailyReport(req, res, next) {
     try {
-      const organizationId = req.user.organizationId;
+      const userRole = req.user.role;
+      const organizationId =
+        userRole === "SUPER_ADMIN"
+          ? req.body?.organizationId || req.user.organizationId
+          : req.user.organizationId;
 
-      if (!organizationId) {
-        throw new AppError(
-          "Employee organization is required",
-          400
-        );
+      if (!organizationId && userRole !== "SUPER_ADMIN") {
+        throw new AppError("Organization is required", 400);
       }
 
-      const shop = await getEmployeeShop(req);
+      const shop = await resolveShop(req);
+      const effectiveOrgId = organizationId || shop.organization_id;
+      const reportDate = resolveReportDate(req.body.reportDate || req.body.report_date);
 
-      const reportDate = new Date()
-        .toISOString()
-        .split("T")[0];
-
-      const existingReport = await getTodayReport(
+      let existingReport = await getExistingReport(
         shop.id,
-        organizationId,
-        reportDate
+        effectiveOrgId,
+        reportDate,
+        req.body.id
       );
 
+      // If report doesn't exist yet, seamlessly create it
       if (!existingReport) {
-        throw new AppError(
-          "Today's daily report does not exist. Use POST first.",
-          404
-        );
+        return DailyReportController.saveDailyReport(req, res, next);
       }
 
-      // Only the employee who created the report can update it
-      if (existingReport.created_by !== req.user.id) {
+      // Permission check: Admins, Super Admins, or report creators can update
+      const canUpdate =
+        userRole === "ADMIN" ||
+        userRole === "SUPER_ADMIN" ||
+        existingReport.created_by === req.user.id;
+
+      if (!canUpdate) {
         throw new AppError(
-          "Only the employee who created today's report can update it",
+          "You do not have permission to update this daily report",
           403
         );
       }
 
-      const {
-        amount = 0,
-
-        tyre = {},
-        twoWheelerEnquiry = {},
-        twoWheelerAlignment = {},
-        wheelAlignment = {},
-        commercialTyre = {},
-        roWater = {},
-        above17Inch = {},
-      } = req.body;
-
-      // --------------------------------------------------------
-      // Validate amount
-      // --------------------------------------------------------
-
-      const reportAmount = validateAmount(amount);
-
-      // --------------------------------------------------------
-      // Validate quantities
-      // --------------------------------------------------------
-
-      const tyreCustomer = validateQuantity(
-        tyre.customer || 0,
-        "tyre.customer"
-      );
-
-      const tyreMechanic = validateQuantity(
-        tyre.mechanic || 0,
-        "tyre.mechanic"
-      );
-
-      const twoWheelerEnquiryCustomer = validateQuantity(
-        twoWheelerEnquiry.customer || 0,
-        "twoWheelerEnquiry.customer"
-      );
-
-      const twoWheelerEnquiryMechanic = validateQuantity(
-        twoWheelerEnquiry.mechanic || 0,
-        "twoWheelerEnquiry.mechanic"
-      );
-
-      const twoWheelerAlignmentCustomer = validateQuantity(
-        twoWheelerAlignment.customer || 0,
-        "twoWheelerAlignment.customer"
-      );
-
-      const twoWheelerAlignmentMechanic = validateQuantity(
-        twoWheelerAlignment.mechanic || 0,
-        "twoWheelerAlignment.mechanic"
-      );
-
-      const wheelAlignmentCustomer = validateQuantity(
-        wheelAlignment.customer || 0,
-        "wheelAlignment.customer"
-      );
-
-      const wheelAlignmentMechanic = validateQuantity(
-        wheelAlignment.mechanic || 0,
-        "wheelAlignment.mechanic"
-      );
-
-      const commercialTyreCustomer = validateQuantity(
-        commercialTyre.customer || 0,
-        "commercialTyre.customer"
-      );
-
-      const commercialTyreMechanic = validateQuantity(
-        commercialTyre.mechanic || 0,
-        "commercialTyre.mechanic"
-      );
-
-      const roWaterCustomer = validateQuantity(
-        roWater.customer || 0,
-        "roWater.customer"
-      );
-
-      const roWaterMechanic = validateQuantity(
-        roWater.mechanic || 0,
-        "roWater.mechanic"
-      );
-
-      const above17InchCustomer = validateQuantity(
-        above17Inch.customer || 0,
-        "above17Inch.customer"
-      );
-
-      const above17InchMechanic = validateQuantity(
-        above17Inch.mechanic || 0,
-        "above17Inch.mechanic"
-      );
-
+      const payload = extractReportPayload(req.body);
       const now = new Date().toISOString();
+      const isIncremental = req.body.isIncremental === true || req.body.incremental === true;
 
-      // --------------------------------------------------------
-      // ADD quantities and amount
-      // --------------------------------------------------------
-
-      await execute(
-        `
-        UPDATE daily_reports
-        SET
-          amount = amount + ?,
-
-          tyre_customer_quantity =
-            tyre_customer_quantity + ?,
-
-          tyre_mechanic_quantity =
-            tyre_mechanic_quantity + ?,
-
-          two_wheeler_enquiry_customer_quantity =
-            two_wheeler_enquiry_customer_quantity + ?,
-
-          two_wheeler_enquiry_mechanic_quantity =
-            two_wheeler_enquiry_mechanic_quantity + ?,
-
-          two_wheeler_alignment_customer_quantity =
-            two_wheeler_alignment_customer_quantity + ?,
-
-          two_wheeler_alignment_mechanic_quantity =
-            two_wheeler_alignment_mechanic_quantity + ?,
-
-          wheel_alignment_customer_quantity =
-            wheel_alignment_customer_quantity + ?,
-
-          wheel_alignment_mechanic_quantity =
-            wheel_alignment_mechanic_quantity + ?,
-
-          commercial_tyre_customer_quantity =
-            commercial_tyre_customer_quantity + ?,
-
-          commercial_tyre_mechanic_quantity =
-            commercial_tyre_mechanic_quantity + ?,
-
-          ro_water_customer_quantity =
-            ro_water_customer_quantity + ?,
-
-          ro_water_mechanic_quantity =
-            ro_water_mechanic_quantity + ?,
-
-          above_17_inch_customer_quantity =
-            above_17_inch_customer_quantity + ?,
-
-          above_17_inch_mechanic_quantity =
-            above_17_inch_mechanic_quantity + ?,
-
-          last_modified_at = ?,
-          last_modified_by = ?
-
-        WHERE id = ?
-          AND organization_id = ?
-          AND shop_id = ?
-          AND report_date = ?
-          AND created_by = ?
-        `,
-        [
-          reportAmount,
-
-          tyreCustomer,
-          tyreMechanic,
-
-          twoWheelerEnquiryCustomer,
-          twoWheelerEnquiryMechanic,
-
-          twoWheelerAlignmentCustomer,
-          twoWheelerAlignmentMechanic,
-
-          wheelAlignmentCustomer,
-          wheelAlignmentMechanic,
-
-          commercialTyreCustomer,
-          commercialTyreMechanic,
-
-          roWaterCustomer,
-          roWaterMechanic,
-
-          above17InchCustomer,
-          above17InchMechanic,
-
-          now,
-          req.user.id,
-
-          existingReport.id,
-          organizationId,
-          shop.id,
-          reportDate,
-          req.user.id,
-        ]
-      );
+      if (isIncremental) {
+        // Add quantities incrementally
+        await execute(
+          `
+          UPDATE daily_reports
+          SET
+            amount = amount + ?,
+            tyre_customer_quantity = tyre_customer_quantity + ?,
+            tyre_mechanic_quantity = tyre_mechanic_quantity + ?,
+            two_wheeler_enquiry_customer_quantity = two_wheeler_enquiry_customer_quantity + ?,
+            two_wheeler_enquiry_mechanic_quantity = two_wheeler_enquiry_mechanic_quantity + ?,
+            two_wheeler_alignment_customer_quantity = two_wheeler_alignment_customer_quantity + ?,
+            two_wheeler_alignment_mechanic_quantity = two_wheeler_alignment_mechanic_quantity + ?,
+            wheel_alignment_customer_quantity = wheel_alignment_customer_quantity + ?,
+            wheel_alignment_mechanic_quantity = wheel_alignment_mechanic_quantity + ?,
+            commercial_tyre_customer_quantity = commercial_tyre_customer_quantity + ?,
+            commercial_tyre_mechanic_quantity = commercial_tyre_mechanic_quantity + ?,
+            ro_water_customer_quantity = ro_water_customer_quantity + ?,
+            ro_water_mechanic_quantity = ro_water_mechanic_quantity + ?,
+            above_17_inch_customer_quantity = above_17_inch_customer_quantity + ?,
+            above_17_inch_mechanic_quantity = above_17_inch_mechanic_quantity + ?,
+            last_modified_at = ?,
+            last_modified_by = ?
+          WHERE id = ?
+          `,
+          [
+            payload.reportAmount,
+            payload.tyreCustomer,
+            payload.tyreMechanic,
+            payload.twoWheelerEnquiryCustomer,
+            payload.twoWheelerEnquiryMechanic,
+            payload.twoWheelerAlignmentCustomer,
+            payload.twoWheelerAlignmentMechanic,
+            payload.wheelAlignmentCustomer,
+            payload.wheelAlignmentMechanic,
+            payload.commercialTyreCustomer,
+            payload.commercialTyreMechanic,
+            payload.roWaterCustomer,
+            payload.roWaterMechanic,
+            payload.above17InchCustomer,
+            payload.above17InchMechanic,
+            now,
+            req.user.id,
+            existingReport.id,
+          ]
+        );
+      } else {
+        // Set whole total quantities (standard mobile app save behavior)
+        await execute(
+          `
+          UPDATE daily_reports
+          SET
+            amount = ?,
+            tyre_customer_quantity = ?,
+            tyre_mechanic_quantity = ?,
+            two_wheeler_enquiry_customer_quantity = ?,
+            two_wheeler_enquiry_mechanic_quantity = ?,
+            two_wheeler_alignment_customer_quantity = ?,
+            two_wheeler_alignment_mechanic_quantity = ?,
+            wheel_alignment_customer_quantity = ?,
+            wheel_alignment_mechanic_quantity = ?,
+            commercial_tyre_customer_quantity = ?,
+            commercial_tyre_mechanic_quantity = ?,
+            ro_water_customer_quantity = ?,
+            ro_water_mechanic_quantity = ?,
+            above_17_inch_customer_quantity = ?,
+            above_17_inch_mechanic_quantity = ?,
+            last_modified_at = ?,
+            last_modified_by = ?
+          WHERE id = ?
+          `,
+          [
+            payload.reportAmount,
+            payload.tyreCustomer,
+            payload.tyreMechanic,
+            payload.twoWheelerEnquiryCustomer,
+            payload.twoWheelerEnquiryMechanic,
+            payload.twoWheelerAlignmentCustomer,
+            payload.twoWheelerAlignmentMechanic,
+            payload.wheelAlignmentCustomer,
+            payload.wheelAlignmentMechanic,
+            payload.commercialTyreCustomer,
+            payload.commercialTyreMechanic,
+            payload.roWaterCustomer,
+            payload.roWaterMechanic,
+            payload.above17InchCustomer,
+            payload.above17InchMechanic,
+            now,
+            req.user.id,
+            existingReport.id,
+          ]
+        );
+      }
 
       const updatedReport = await getOne(
         `
@@ -616,16 +688,35 @@ const DailyReportController = {
 
       // Employee shop assignment check
       if (userRole === "EMPLOYEE") {
+        const assignedCount = await getOne(
+          "SELECT COUNT(*) as count FROM user_shops WHERE user_id = ?",
+          [req.user.id]
+        );
+        const hasAssignments = Number(assignedCount?.count || 0) > 0;
+
         if (shopId) {
-          const isAssigned = await getOne(
-            "SELECT id FROM user_shops WHERE user_id = ? AND shop_id = ?",
-            [req.user.id, shopId]
-          );
-          if (!isAssigned) {
-            throw new AppError(
-              "Access denied: You are not assigned to this shop",
-              403
+          if (hasAssignments) {
+            const isAssigned = await getOne(
+              "SELECT id FROM user_shops WHERE user_id = ? AND shop_id = ?",
+              [req.user.id, shopId]
             );
+            if (!isAssigned) {
+              throw new AppError(
+                "Access denied: You are not assigned to this shop",
+                403
+              );
+            }
+          } else {
+            const shop = await getOne(
+              "SELECT id FROM shops WHERE id = ? AND organization_id = ? AND is_active = 1",
+              [shopId, organizationId]
+            );
+            if (!shop) {
+              throw new AppError(
+                "Access denied: Shop not found or not in your organization",
+                403
+              );
+            }
           }
         }
       }
@@ -633,8 +724,7 @@ const DailyReportController = {
       let sql = `
         SELECT
           dr.*,
-          s.name AS shop_name,
-          s.code AS shop_code
+          s.name AS shop_name
         FROM daily_reports dr
         LEFT JOIN shops s
           ON s.id = dr.shop_id
@@ -652,9 +742,15 @@ const DailyReportController = {
         sql += ` AND dr.shop_id = ?`;
         params.push(shopId);
       } else if (userRole === "EMPLOYEE") {
-        // Employee with no shopId sees all shops they are assigned to
-        sql += ` AND dr.shop_id IN (SELECT shop_id FROM user_shops WHERE user_id = ?)`;
-        params.push(req.user.id);
+        const assignedCount = await getOne(
+          "SELECT COUNT(*) as count FROM user_shops WHERE user_id = ?",
+          [req.user.id]
+        );
+        const hasAssignments = Number(assignedCount?.count || 0) > 0;
+        if (hasAssignments) {
+          sql += ` AND dr.shop_id IN (SELECT shop_id FROM user_shops WHERE user_id = ?)`;
+          params.push(req.user.id);
+        }
       }
 
       const fromDate = from || startDate;

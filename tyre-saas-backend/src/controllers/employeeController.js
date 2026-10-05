@@ -41,7 +41,7 @@ async function verifyShopAccess(userId, userRole, userOrgId, shopId) {
 async function resolveTyreSize(orgId, tyreSizeId, tyreSizeText) {
   if (tyreSizeId) {
     const row = await getOne(
-      `SELECT id, size FROM tyre_sizes WHERE id = ? AND organization_id = ? AND is_active = 1`,
+      `SELECT id, size FROM tyre_sizes WHERE id = ? AND (organization_id = ? OR organization_id IS NULL) AND is_active = 1`,
       [tyreSizeId, orgId]
     );
     if (!row) {
@@ -53,7 +53,7 @@ async function resolveTyreSize(orgId, tyreSizeId, tyreSizeText) {
   if (tyreSizeText && tyreSizeText.trim()) {
     const cleanText = tyreSizeText.trim();
     const sizes = await query(
-      `SELECT id, size FROM tyre_sizes WHERE organization_id = ? AND is_active = 1`,
+      `SELECT id, size FROM tyre_sizes WHERE (organization_id = ? OR organization_id IS NULL) AND is_active = 1`,
       [orgId]
     );
     const normalizedInput = cleanText.replace(/\s+/g, "").toLowerCase();
@@ -69,7 +69,7 @@ async function resolveTyreSize(orgId, tyreSizeId, tyreSizeText) {
 async function resolveTyreBrand(orgId, tyreBrandId, tyreBrandText) {
   if (tyreBrandId) {
     const row = await getOne(
-      `SELECT id, name FROM tyre_brands WHERE id = ? AND organization_id = ? AND is_active = 1`,
+      `SELECT id, name FROM tyre_brands WHERE id = ? AND (organization_id = ? OR organization_id IS NULL) AND is_active = 1`,
       [tyreBrandId, orgId]
     );
     if (!row) {
@@ -81,7 +81,7 @@ async function resolveTyreBrand(orgId, tyreBrandId, tyreBrandText) {
   if (tyreBrandText && tyreBrandText.trim()) {
     const cleanText = tyreBrandText.trim();
     const brands = await query(
-      `SELECT id, name FROM tyre_brands WHERE organization_id = ? AND is_active = 1`,
+      `SELECT id, name FROM tyre_brands WHERE (organization_id = ? OR organization_id IS NULL) AND is_active = 1`,
       [orgId]
     );
     const normalizedInput = cleanText.replace(/\s+/g, "").toLowerCase();
@@ -92,7 +92,7 @@ async function resolveTyreBrand(orgId, tyreBrandId, tyreBrandText) {
   }
 
   const other = await getOne(
-    `SELECT id, name FROM tyre_brands WHERE organization_id = ? AND LOWER(name) = 'other' AND is_active = 1`,
+    `SELECT id, name FROM tyre_brands WHERE (organization_id = ? OR organization_id IS NULL) AND LOWER(name) = 'other' AND is_active = 1`,
     [orgId]
   );
   if (other) {
@@ -2064,7 +2064,7 @@ static async getTyreSizes(req, res, next) {
           created_at,
           last_modified_at
         FROM tyre_sizes
-        WHERE organization_id = ?
+        WHERE (organization_id = ? OR organization_id IS NULL)
           AND is_active = 1
         ORDER BY size ASC
       `,
@@ -2097,7 +2097,7 @@ static async getTyreBrands(req, res, next) {
           created_at,
           last_modified_at
         FROM tyre_brands
-        WHERE organization_id = ?
+        WHERE (organization_id = ? OR organization_id IS NULL)
           AND is_active = 1
         ORDER BY name ASC
       `,

@@ -685,7 +685,11 @@ async function runPostgresMigrations() {
     "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_name VARCHAR(128);",
     "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_location VARCHAR(128);",
     "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_address TEXT;",
-    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_amount NUMERIC(10, 2);"
+    "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_amount NUMERIC(10, 2);",
+    "ALTER TABLE tyre_sizes ALTER COLUMN organization_id DROP NOT NULL;",
+    "ALTER TABLE tyre_brands ALTER COLUMN organization_id DROP NOT NULL;",
+    "ALTER TABLE enquiry_tyre_options DROP CONSTRAINT IF EXISTS fk_enquiry_tyre_options_product;",
+    "ALTER TABLE enquiry_tyre_options ADD CONSTRAINT fk_enquiry_tyre_options_product FOREIGN KEY (tyre_product_id) REFERENCES tyre_products(id) ON DELETE CASCADE;"
   ];
 
   try {
