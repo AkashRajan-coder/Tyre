@@ -524,6 +524,7 @@ const DailyReportController = {
       const canUpdate =
         userRole === "ADMIN" ||
         userRole === "SUPER_ADMIN" ||
+        userRole === 'EMPLOYEE' ||
         existingReport.created_by === req.user.id;
 
       if (!canUpdate) {
