@@ -432,21 +432,19 @@ async getTargetDashboard(req, res, next) {
       throw new AppError("organizationId is required", 400);
     }
 
-    const {
-      shopId,
-      targetYear,
-      targetMonth,
-    } = req.query;
+    const shopId = req.query.shopId;
+    const rawYear = req.query.targetYear !== undefined ? req.query.targetYear : req.query.year;
+    const rawMonth = req.query.targetMonth !== undefined ? req.query.targetMonth : req.query.month;
 
-    if (!shopId || targetYear === undefined || targetMonth === undefined) {
+    if (!shopId || rawYear === undefined || rawMonth === undefined) {
       throw new AppError(
         "shopId, targetYear and targetMonth are required",
         400
       );
     }
 
-    const year = Number(targetYear);
-    const month = Number(targetMonth);
+    const year = Number(rawYear);
+    const month = Number(rawMonth);
 
     validateMonthYear(month, year);
 

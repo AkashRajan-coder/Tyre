@@ -2270,7 +2270,8 @@
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="spinner"></span> Saving Sizes...';
 
-      const targetOrgId = document.getElementById('bulkSizeTargetOrgSelect').value || null;
+      const sizeScopeVal = document.getElementById('bulkSizeTargetOrgSelect')?.value;
+      const targetOrgId = (!sizeScopeVal || sizeScopeVal === 'global') ? null : sizeScopeVal;
 
       try {
         const res = await apiRequest('/api/v1/super-admin/tyre-sizes/bulk', {
@@ -2770,7 +2771,8 @@
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="spinner"></span> Saving Brands...';
 
-      const targetOrgId = document.getElementById('bulkBrandTargetOrgSelect').value || null;
+      const brandScopeVal = document.getElementById('bulkBrandTargetOrgSelect')?.value;
+      const targetOrgId = (!brandScopeVal || brandScopeVal === 'global') ? null : brandScopeVal;
 
       try {
         const res = await apiRequest('/api/v1/super-admin/tyre-brands/bulk', {
