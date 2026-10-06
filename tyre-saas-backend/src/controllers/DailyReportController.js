@@ -258,15 +258,11 @@ async function getExistingReport(shopId, organizationId, reportDate, reportId) {
     FROM daily_reports
     WHERE shop_id = ?
       AND (organization_id = ? OR ? IS NULL)
-      AND (
-        report_date = ?
-        OR SUBSTR(report_date, 1, 10) = ?
-        OR report_date LIKE ?
-      )
+      AND report_date = ?
     ORDER BY created_at DESC
     LIMIT 1
     `,
-    [shopId, organizationId, organizationId, dateStr, dateStr, `${dateStr}%`]
+    [shopId, organizationId, organizationId, dateStr]
   );
 }
 
