@@ -590,7 +590,7 @@ async function createTablesPostgres() {
 
     CREATE TABLE IF NOT EXISTS car_brands (
       id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      organization_id VARCHAR(64) REFERENCES organizations(id) ON DELETE CASCADE,
       name VARCHAR(128) NOT NULL,
       is_active SMALLINT DEFAULT 1,
       created_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -601,7 +601,7 @@ async function createTablesPostgres() {
 
     CREATE TABLE IF NOT EXISTS car_models (
       id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      organization_id VARCHAR(64) REFERENCES organizations(id) ON DELETE CASCADE,
       car_brand_id VARCHAR(64) NOT NULL REFERENCES car_brands(id) ON DELETE CASCADE,
       name VARCHAR(128) NOT NULL,
       is_active SMALLINT DEFAULT 1,
@@ -776,6 +776,8 @@ async function runPostgresMigrations() {
     "ALTER TABLE customer_enquiries ADD COLUMN IF NOT EXISTS outside_shop_amount NUMERIC(10, 2);",
     "ALTER TABLE tyre_sizes ALTER COLUMN organization_id DROP NOT NULL;",
     "ALTER TABLE tyre_brands ALTER COLUMN organization_id DROP NOT NULL;",
+    "ALTER TABLE car_brands ALTER COLUMN organization_id DROP NOT NULL;",
+    "ALTER TABLE car_models ALTER COLUMN organization_id DROP NOT NULL;",
     "ALTER TABLE enquiry_tyre_options DROP CONSTRAINT IF EXISTS fk_enquiry_tyre_options_product;",
     "ALTER TABLE enquiry_tyre_options ADD CONSTRAINT fk_enquiry_tyre_options_product FOREIGN KEY (tyre_product_id) REFERENCES tyre_products(id) ON DELETE CASCADE;"
   ];

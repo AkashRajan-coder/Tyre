@@ -511,7 +511,7 @@ static async activateBusinessAdmin(req, res, next) {
 
       const deduplicated = Array.from(uniqueMap.values());
       const now = new Date().toISOString();
-      const targetOrgId = organizationId || null;
+      const targetOrgId = (!organizationId || organizationId === "global" || organizationId === "GLOBAL") ? null : organizationId;
 
       // Fetch existing sizes for this scope
       const existingRows = targetOrgId
@@ -903,7 +903,7 @@ static async activateBusinessAdmin(req, res, next) {
 
       const deduplicated = Array.from(uniqueMap.values());
       const now = new Date().toISOString();
-      const targetOrgId = organizationId || null;
+      const targetOrgId = (!organizationId || organizationId === "global" || organizationId === "GLOBAL") ? null : organizationId;
 
       const existingRows = targetOrgId
         ? await query("SELECT name FROM tyre_brands WHERE organization_id = ?", [targetOrgId])
