@@ -81,23 +81,43 @@ async function resolveShop(req) {
   }
 
   // Fallback 1: user_shops table
-  let shop = await getOne(
-    `
-    SELECT
-      s.id,
-      s.name,
-      s.organization_id
-    FROM user_shops us
-    INNER JOIN shops s
-      ON s.id = us.shop_id
-    WHERE us.user_id = ?
-      AND (s.organization_id = ? OR ? IS NULL)
-      AND s.is_active = 1
-    ORDER BY s.created_at ASC
-    LIMIT 1
-    `,
-    [userId, organizationId, organizationId]
-  );
+  let shop = null;
+  if (organizationId) {
+    shop = await getOne(
+      `
+      SELECT
+        s.id,
+        s.name,
+        s.organization_id
+      FROM user_shops us
+      INNER JOIN shops s
+        ON s.id = us.shop_id
+      WHERE us.user_id = ?
+        AND s.organization_id = ?
+        AND s.is_active = 1
+      ORDER BY s.created_at ASC
+      LIMIT 1
+      `,
+      [userId, organizationId]
+    );
+  } else {
+    shop = await getOne(
+      `
+      SELECT
+        s.id,
+        s.name,
+        s.organization_id
+      FROM user_shops us
+      INNER JOIN shops s
+        ON s.id = us.shop_id
+      WHERE us.user_id = ?
+        AND s.is_active = 1
+      ORDER BY s.created_at ASC
+      LIMIT 1
+      `,
+      [userId]
+    );
+  }
 
   // Fallback 2: first active shop in organization (e.g. for ADMIN or unassigned staff)
   if (!shop && organizationId) {
@@ -243,26 +263,40 @@ async function getExistingReport(shopId, organizationId, reportDate, reportId) {
       `
       SELECT *
       FROM daily_reports
-      WHERE id = ? AND (organization_id = ? OR ? IS NULL)
+      WHERE id = ?
       `,
-      [reportId, organizationId, organizationId]
+      [reportId]
     );
     if (reportById) return reportById;
   }
 
   const dateStr = String(reportDate || "").split("T")[0];
 
+  if (organizationId) {
+    return await getOne(
+      `
+      SELECT *
+      FROM daily_reports
+      WHERE shop_id = ?
+        AND organization_id = ?
+        AND report_date = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+      `,
+      [shopId, organizationId, dateStr]
+    );
+  }
+
   return await getOne(
     `
     SELECT *
     FROM daily_reports
     WHERE shop_id = ?
-      AND (organization_id = ? OR ? IS NULL)
       AND report_date = ?
     ORDER BY created_at DESC
     LIMIT 1
     `,
-    [shopId, organizationId, organizationId, dateStr]
+    [shopId, dateStr]
   );
 }
 
