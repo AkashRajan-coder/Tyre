@@ -23,7 +23,7 @@ class CarModelController {
         FROM car_models cm
         JOIN car_brands cb
           ON cb.id = cm.car_brand_id
-        WHERE cm.organization_id = ?
+        WHERE (cm.organization_id = ? OR cm.organization_id IS NULL)
       `;
 
       const params = [organizationId];

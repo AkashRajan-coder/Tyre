@@ -49,4 +49,15 @@ router.delete("/organizations/:organizationId/tyre-brands", SuperAdminController
 router.patch("/tyre-brands/:id/status", SuperAdminController.toggleTyreBrandStatus);
 router.delete("/tyre-brands/:id", SuperAdminController.deleteTyreBrand);
 
+// Global Master Cars Management (Brands & Models)
+router.get("/cars", SuperAdminController.listCars);
+router.post("/cars", SuperAdminController.createCar);
+router.post("/cars/bulk", SuperAdminController.bulkCreateCars);
+router.patch("/cars/:id/status", SuperAdminController.toggleCarStatus);
+router.delete("/cars/:id", SuperAdminController.deleteCar);
+
+router.get("/car-brands", SuperAdminController.listCarBrands);
+router.patch("/car-brands/:id/status", SuperAdminController.toggleCarBrandStatus);
+router.delete("/car-brands/:id", SuperAdminController.deleteCarBrand);
+
 module.exports = router;

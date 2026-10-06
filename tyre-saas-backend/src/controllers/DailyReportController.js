@@ -250,19 +250,23 @@ async function getExistingReport(shopId, organizationId, reportDate, reportId) {
     if (reportById) return reportById;
   }
 
+  const dateStr = String(reportDate || "").split("T")[0];
+
   return await getOne(
     `
     SELECT *
     FROM daily_reports
     WHERE shop_id = ?
-      AND organization_id = ?
+      AND (organization_id = ? OR ? IS NULL)
       AND (
         report_date = ?
-        OR report_date::text LIKE ?
+        OR SUBSTR(report_date, 1, 10) = ?
+        OR report_date LIKE ?
       )
+    ORDER BY created_at DESC
     LIMIT 1
     `,
-    [shopId, organizationId, reportDate, `${reportDate}%`]
+    [shopId, organizationId, organizationId, dateStr, dateStr, `${dateStr}%`]
   );
 }
 
@@ -300,51 +304,100 @@ const DailyReportController = {
       const now = new Date().toISOString();
 
       if (existingReport) {
-        // Upsert behavior: update the existing report with latest figures
-        await execute(
-          `
-          UPDATE daily_reports
-          SET
-            amount = ?,
-            tyre_customer_quantity = ?,
-            tyre_mechanic_quantity = ?,
-            two_wheeler_enquiry_customer_quantity = ?,
-            two_wheeler_enquiry_mechanic_quantity = ?,
-            two_wheeler_alignment_customer_quantity = ?,
-            two_wheeler_alignment_mechanic_quantity = ?,
-            wheel_alignment_customer_quantity = ?,
-            wheel_alignment_mechanic_quantity = ?,
-            commercial_tyre_customer_quantity = ?,
-            commercial_tyre_mechanic_quantity = ?,
-            ro_water_customer_quantity = ?,
-            ro_water_mechanic_quantity = ?,
-            above_17_inch_customer_quantity = ?,
-            above_17_inch_mechanic_quantity = ?,
-            last_modified_at = ?,
-            last_modified_by = ?
-          WHERE id = ?
-          `,
-          [
-            payload.reportAmount,
-            payload.tyreCustomer,
-            payload.tyreMechanic,
-            payload.twoWheelerEnquiryCustomer,
-            payload.twoWheelerEnquiryMechanic,
-            payload.twoWheelerAlignmentCustomer,
-            payload.twoWheelerAlignmentMechanic,
-            payload.wheelAlignmentCustomer,
-            payload.wheelAlignmentMechanic,
-            payload.commercialTyreCustomer,
-            payload.commercialTyreMechanic,
-            payload.roWaterCustomer,
-            payload.roWaterMechanic,
-            payload.above17InchCustomer,
-            payload.above17InchMechanic,
-            now,
-            req.user.id,
-            existingReport.id,
-          ]
-        );
+        // Upsert behavior: update the existing report with latest figures or increment
+        const isIncremental = req.body.isIncremental === true || req.body.incremental === true;
+
+        if (isIncremental) {
+          await execute(
+            `
+            UPDATE daily_reports
+            SET
+              amount = amount + ?,
+              tyre_customer_quantity = tyre_customer_quantity + ?,
+              tyre_mechanic_quantity = tyre_mechanic_quantity + ?,
+              two_wheeler_enquiry_customer_quantity = two_wheeler_enquiry_customer_quantity + ?,
+              two_wheeler_enquiry_mechanic_quantity = two_wheeler_enquiry_mechanic_quantity + ?,
+              two_wheeler_alignment_customer_quantity = two_wheeler_alignment_customer_quantity + ?,
+              two_wheeler_alignment_mechanic_quantity = two_wheeler_alignment_mechanic_quantity + ?,
+              wheel_alignment_customer_quantity = wheel_alignment_customer_quantity + ?,
+              wheel_alignment_mechanic_quantity = wheel_alignment_mechanic_quantity + ?,
+              commercial_tyre_customer_quantity = commercial_tyre_customer_quantity + ?,
+              commercial_tyre_mechanic_quantity = commercial_tyre_mechanic_quantity + ?,
+              ro_water_customer_quantity = ro_water_customer_quantity + ?,
+              ro_water_mechanic_quantity = ro_water_mechanic_quantity + ?,
+              above_17_inch_customer_quantity = above_17_inch_customer_quantity + ?,
+              above_17_inch_mechanic_quantity = above_17_inch_mechanic_quantity + ?,
+              last_modified_at = ?,
+              last_modified_by = ?
+            WHERE id = ?
+            `,
+            [
+              payload.reportAmount,
+              payload.tyreCustomer,
+              payload.tyreMechanic,
+              payload.twoWheelerEnquiryCustomer,
+              payload.twoWheelerEnquiryMechanic,
+              payload.twoWheelerAlignmentCustomer,
+              payload.twoWheelerAlignmentMechanic,
+              payload.wheelAlignmentCustomer,
+              payload.wheelAlignmentMechanic,
+              payload.commercialTyreCustomer,
+              payload.commercialTyreMechanic,
+              payload.roWaterCustomer,
+              payload.roWaterMechanic,
+              payload.above17InchCustomer,
+              payload.above17InchMechanic,
+              now,
+              req.user.id,
+              existingReport.id,
+            ]
+          );
+        } else {
+          await execute(
+            `
+            UPDATE daily_reports
+            SET
+              amount = ?,
+              tyre_customer_quantity = ?,
+              tyre_mechanic_quantity = ?,
+              two_wheeler_enquiry_customer_quantity = ?,
+              two_wheeler_enquiry_mechanic_quantity = ?,
+              two_wheeler_alignment_customer_quantity = ?,
+              two_wheeler_alignment_mechanic_quantity = ?,
+              wheel_alignment_customer_quantity = ?,
+              wheel_alignment_mechanic_quantity = ?,
+              commercial_tyre_customer_quantity = ?,
+              commercial_tyre_mechanic_quantity = ?,
+              ro_water_customer_quantity = ?,
+              ro_water_mechanic_quantity = ?,
+              above_17_inch_customer_quantity = ?,
+              above_17_inch_mechanic_quantity = ?,
+              last_modified_at = ?,
+              last_modified_by = ?
+            WHERE id = ?
+            `,
+            [
+              payload.reportAmount,
+              payload.tyreCustomer,
+              payload.tyreMechanic,
+              payload.twoWheelerEnquiryCustomer,
+              payload.twoWheelerEnquiryMechanic,
+              payload.twoWheelerAlignmentCustomer,
+              payload.twoWheelerAlignmentMechanic,
+              payload.wheelAlignmentCustomer,
+              payload.wheelAlignmentMechanic,
+              payload.commercialTyreCustomer,
+              payload.commercialTyreMechanic,
+              payload.roWaterCustomer,
+              payload.roWaterMechanic,
+              payload.above17InchCustomer,
+              payload.above17InchMechanic,
+              now,
+              req.user.id,
+              existingReport.id,
+            ]
+          );
+        }
 
         const updatedReport = await getOne(
           `
@@ -520,19 +573,8 @@ const DailyReportController = {
         return DailyReportController.saveDailyReport(req, res, next);
       }
 
-      // Permission check: Admins, Super Admins, or report creators can update
-      const canUpdate =
-        userRole === "ADMIN" ||
-        userRole === "SUPER_ADMIN" ||
-        userRole === 'EMPLOYEE' ||
-        existingReport.created_by === req.user.id;
-
-      if (!canUpdate) {
-        throw new AppError(
-          "You do not have permission to update this daily report",
-          403
-        );
-      }
+      // Any assigned employee for this shop, shop admin, or super admin can update
+      // Creator restriction removed to allow seamless collaboration and overwrites
 
       const payload = extractReportPayload(req.body);
       const now = new Date().toISOString();

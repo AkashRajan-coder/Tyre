@@ -699,7 +699,7 @@ static async createEnquiry(req, res, next) {
             ON cb.id = cm.car_brand_id
           WHERE cm.id = ?
             AND cm.car_brand_id = ?
-            AND cm.organization_id = ?
+            AND (cm.organization_id = ? OR cm.organization_id IS NULL)
             AND cm.is_active = 1
             AND cb.is_active = 1
         `,
@@ -1741,7 +1741,7 @@ static async updateEnquiry(req, res, next) {
             ON cb.id = cm.car_brand_id
           WHERE cm.id = ?
             AND cm.car_brand_id = ?
-            AND cm.organization_id = ?
+            AND (cm.organization_id = ? OR cm.organization_id IS NULL)
             AND cm.is_active = 1
             AND cb.is_active = 1
         `,
@@ -2031,7 +2031,7 @@ static async getCarBrands(req, res, next) {
           id,
           name
         FROM car_brands
-        WHERE organization_id = ?
+        WHERE (organization_id = ? OR organization_id IS NULL)
           AND is_active = 1
         ORDER BY name ASC
       `,
@@ -2130,7 +2130,7 @@ static async getCarModels(req, res, next) {
       FROM car_models cm
       JOIN car_brands cb
         ON cb.id = cm.car_brand_id
-      WHERE cm.organization_id = ?
+      WHERE (cm.organization_id = ? OR cm.organization_id IS NULL)
         AND cm.is_active = 1
         AND cb.is_active = 1
     `;

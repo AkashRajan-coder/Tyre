@@ -30,7 +30,9 @@ Super Admin (SaaS Platform Owner)
    - Standalone DDL migration script provided in `migrations.sql`.
 4. **Interactive Swagger UI**:
    - Access at `http://localhost:5000/api/docs` with Bearer JWT authorize support for all 3 roles.
-5. **Audit Trail & Soft Deletes**:
+5. **Super Admin Web Command Portal**:
+   - Access at `http://localhost:5000/superadmin` (or open `public/superadmin.html` in browser). Complete GUI to create/manage organizations, provision and manage business admins, reset passwords, and inspect real-time metrics.
+6. **Audit Trail & Soft Deletes**:
    - All tables stamp `created_by`, `created_at`, `last_modified_by`, and `last_modified_at`.
    - Deletions are soft (`is_deleted = 1`, `is_active = 0`).
 

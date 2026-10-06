@@ -19,7 +19,7 @@ class CarBrandController {
             created_at,
             last_modified_at
           FROM car_brands
-          WHERE organization_id = ?
+          WHERE (organization_id = ? OR organization_id IS NULL)
           ORDER BY name ASC
         `,
         [organizationId]

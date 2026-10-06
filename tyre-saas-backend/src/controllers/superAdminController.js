@@ -6,7 +6,7 @@ class SuperAdminController {
   // 1. Global SaaS Dashboard Overview
   static async getPlatformDashboard(req, res, next) {
     try {
-      const [orgsCount, shopsCount, adminsCount, employeesCount, enquiriesCount, sizesCount, brandsCount] = await Promise.all([
+      const [orgsCount, shopsCount, adminsCount, employeesCount, enquiriesCount, sizesCount, brandsCount, carsCount, carBrandsCount] = await Promise.all([
         getOne("SELECT COUNT(*) as c FROM organizations WHERE is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM shops WHERE is_active = 1"),
         getOne("SELECT COUNT(*) as c FROM users WHERE role = 'ADMIN' AND is_active = 1"),
@@ -14,6 +14,8 @@ class SuperAdminController {
         getOne("SELECT COUNT(*) as c FROM customer_enquiries WHERE is_deleted = 0"),
         getOne("SELECT COUNT(*) as c FROM tyre_sizes"),
         getOne("SELECT COUNT(*) as c FROM tyre_brands"),
+        getOne("SELECT COUNT(*) as c FROM car_models"),
+        getOne("SELECT COUNT(*) as c FROM car_brands"),
       ]);
 
       const organizations = await query(
@@ -42,6 +44,8 @@ class SuperAdminController {
             totalEnquiries: parseInt(enquiriesCount?.c || 0, 10),
             totalTyreSizes: parseInt(sizesCount?.c || 0, 10),
             totalTyreBrands: parseInt(brandsCount?.c || 0, 10),
+            totalCars: parseInt(carsCount?.c || 0, 10),
+            totalCarBrands: parseInt(carBrandsCount?.c || 0, 10),
           },
           organizations,
         },
@@ -1160,6 +1164,345 @@ static async activateBusinessAdmin(req, res, next) {
         organizationName: orgName,
         message: `Successfully deleted all ${brands.length} tyre brand(s) for organization "${orgName}".`
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // =============================================================
+  // CAR MASTER CATALOG MANAGEMENT (BRANDS & MODELS)
+  // =============================================================
+
+  static async listCars(req, res, next) {
+    try {
+      const { organizationId, scope, brandId, search } = req.query;
+
+      let sql = `
+        SELECT
+          cm.id,
+          cm.organization_id,
+          cm.car_brand_id,
+          cb.name AS brand_name,
+          cm.name,
+          cm.is_active,
+          cm.created_at,
+          cm.last_modified_at,
+          o.name as organization_name,
+          o.slug as organization_slug
+        FROM car_models cm
+        JOIN car_brands cb ON cb.id = cm.car_brand_id
+        LEFT JOIN organizations o ON o.id = cm.organization_id
+        WHERE 1 = 1
+      `;
+      const params = [];
+
+      if (scope === "global") {
+        sql += " AND cm.organization_id IS NULL";
+      } else if (scope === "org" && organizationId) {
+        sql += " AND cm.organization_id = ?";
+        params.push(organizationId);
+      } else if (organizationId) {
+        sql += " AND (cm.organization_id = ? OR cm.organization_id IS NULL)";
+        params.push(organizationId);
+      }
+
+      if (brandId) {
+        sql += " AND cm.car_brand_id = ?";
+        params.push(brandId);
+      }
+
+      if (search && search.trim()) {
+        const s = `%${search.trim()}%`;
+        sql += " AND (cm.name LIKE ? OR cb.name LIKE ?)";
+        params.push(s, s);
+      }
+
+      sql += " ORDER BY cb.name ASC, cm.name ASC";
+
+      const rows = await query(sql, params);
+      res.json({ success: true, count: rows.length, data: rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async listCarBrands(req, res, next) {
+    try {
+      const { organizationId, scope } = req.query;
+
+      let sql = `
+        SELECT
+          cb.id,
+          cb.organization_id,
+          cb.name,
+          cb.is_active,
+          cb.created_at,
+          o.name as organization_name,
+          o.slug as organization_slug,
+          (SELECT COUNT(*) FROM car_models cm WHERE cm.car_brand_id = cb.id) as models_count
+        FROM car_brands cb
+        LEFT JOIN organizations o ON o.id = cb.organization_id
+        WHERE 1 = 1
+      `;
+      const params = [];
+
+      if (scope === "global") {
+        sql += " AND cb.organization_id IS NULL";
+      } else if (scope === "org" && organizationId) {
+        sql += " AND cb.organization_id = ?";
+        params.push(organizationId);
+      } else if (organizationId) {
+        sql += " AND (cb.organization_id = ? OR cb.organization_id IS NULL)";
+        params.push(organizationId);
+      }
+
+      sql += " ORDER BY cb.name ASC";
+
+      const rows = await query(sql, params);
+      res.json({ success: true, count: rows.length, data: rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async bulkCreateCars(req, res, next) {
+    try {
+      const { rawInput, cars: inputCars, organizationId, scope } = req.body;
+
+      let candidatePairs = [];
+
+      if (Array.isArray(inputCars)) {
+        for (const item of inputCars) {
+          if (item && item.brand && item.model) {
+            candidatePairs.push({
+              brand: String(item.brand).trim(),
+              model: String(item.model).trim(),
+            });
+          }
+        }
+      } else if (typeof rawInput === "string" && rawInput.trim()) {
+        const lines = rawInput.split(/[\r\n]+/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          // Clean list numbering like "1. ", "- "
+          const cleaned = trimmed.replace(/^\s*(?:\d+[\.\)\-\:]|[-*•])\s*/i, "").trim();
+          if (!cleaned) continue;
+
+          // Split by comma, pipe, tab, or dash
+          let parts = cleaned.split(/[,|\t]+/);
+          if (parts.length < 2 && cleaned.includes(" - ")) {
+            parts = cleaned.split(/\s+-\s+/);
+          }
+
+          if (parts.length >= 2) {
+            const b = parts[0].trim();
+            const m = parts.slice(1).join(" ").trim();
+            // Skip header lines like "Brand, Model"
+            if (b.toLowerCase() === "brand" && m.toLowerCase() === "model") continue;
+            if (b.length >= 1 && m.length >= 1) {
+              candidatePairs.push({ brand: b, model: m });
+            }
+          }
+        }
+      }
+
+      if (!candidatePairs.length) {
+        throw new AppError("No valid car brand and model pairs provided. Format: Brand, Model (e.g. 'Hyundai, Creta').", 400);
+      }
+
+      // Determine scope: GLOBAL by default unless a specific organization is requested
+      const targetOrgId = (scope === "global" || !organizationId || organizationId === "global") ? null : organizationId;
+      const now = new Date().toISOString();
+
+      // Deduplicate candidate pairs case-insensitively
+      const uniqueMap = new Map();
+      for (const pair of candidatePairs) {
+        const key = `${pair.brand.toLowerCase()}:::${pair.model.toLowerCase()}`;
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, pair);
+        }
+      }
+
+      const deduplicated = Array.from(uniqueMap.values());
+
+      // Fetch or create brands
+      const existingBrands = targetOrgId
+        ? await query("SELECT id, name FROM car_brands WHERE organization_id = ?", [targetOrgId])
+        : await query("SELECT id, name FROM car_brands WHERE organization_id IS NULL");
+
+      const brandMap = new Map();
+      for (const b of existingBrands) {
+        brandMap.set(b.name.toLowerCase().trim(), b.id);
+      }
+
+      let insertedBrandsCount = 0;
+      let insertedModelsCount = 0;
+      let skippedModelsCount = 0;
+      const inserted = [];
+
+      for (const item of deduplicated) {
+        const brandKey = item.brand.toLowerCase().trim();
+        let brandId = brandMap.get(brandKey);
+
+        if (!brandId) {
+          brandId = uuid();
+          await execute(
+            `INSERT INTO car_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by)
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+            [brandId, targetOrgId, item.brand, now, req.user.id, now, req.user.id]
+          );
+          brandMap.set(brandKey, brandId);
+          insertedBrandsCount++;
+        }
+
+        // Check if model already exists for this brand and scope
+        const existingModel = targetOrgId
+          ? await getOne("SELECT id FROM car_models WHERE car_brand_id = ? AND LOWER(name) = LOWER(?) AND organization_id = ?", [brandId, item.model.trim(), targetOrgId])
+          : await getOne("SELECT id FROM car_models WHERE car_brand_id = ? AND LOWER(name) = LOWER(?) AND organization_id IS NULL", [brandId, item.model.trim()]);
+
+        if (existingModel) {
+          skippedModelsCount++;
+          continue;
+        }
+
+        const modelId = uuid();
+        await execute(
+          `INSERT INTO car_models (id, organization_id, car_brand_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by)
+           VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+          [modelId, targetOrgId, brandId, item.model.trim(), now, req.user.id, now, req.user.id]
+        );
+
+        insertedModelsCount++;
+        inserted.push({ id: modelId, brand: item.brand, model: item.model, organizationId: targetOrgId });
+      }
+
+      const scopeText = targetOrgId ? "organization catalog" : "Global Master Catalog";
+      res.status(201).json({
+        success: true,
+        message: `Processed ${deduplicated.length} cars for ${scopeText}: ${insertedModelsCount} models added, ${insertedBrandsCount} new brands created, ${skippedModelsCount} already existed.`,
+        data: {
+          totalProcessed: deduplicated.length,
+          insertedBrandsCount,
+          insertedModelsCount,
+          skippedModelsCount,
+          inserted,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async createCar(req, res, next) {
+    try {
+      const { brandName, modelName, brandId: inputBrandId, organizationId, scope } = req.body;
+
+      if (!modelName || !modelName.trim()) {
+        throw new AppError("Car model name is required", 400);
+      }
+
+      const targetOrgId = (scope === "global" || !organizationId || organizationId === "global") ? null : organizationId;
+      const now = new Date().toISOString();
+
+      let brandId = inputBrandId;
+
+      if (!brandId) {
+        if (!brandName || !brandName.trim()) {
+          throw new AppError("Car brand name or brandId is required", 400);
+        }
+
+        const existingBrand = targetOrgId
+          ? await getOne("SELECT id FROM car_brands WHERE LOWER(name) = LOWER(?) AND organization_id = ?", [brandName.trim(), targetOrgId])
+          : await getOne("SELECT id FROM car_brands WHERE LOWER(name) = LOWER(?) AND organization_id IS NULL", [brandName.trim()]);
+
+        if (existingBrand) {
+          brandId = existingBrand.id;
+        } else {
+          brandId = uuid();
+          await execute(
+            `INSERT INTO car_brands (id, organization_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by)
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+            [brandId, targetOrgId, brandName.trim(), now, req.user.id, now, req.user.id]
+          );
+        }
+      }
+
+      const existingModel = targetOrgId
+        ? await getOne("SELECT id FROM car_models WHERE car_brand_id = ? AND LOWER(name) = LOWER(?) AND organization_id = ?", [brandId, modelName.trim(), targetOrgId])
+        : await getOne("SELECT id FROM car_models WHERE car_brand_id = ? AND LOWER(name) = LOWER(?) AND organization_id IS NULL", [brandId, modelName.trim()]);
+
+      if (existingModel) {
+        throw new AppError("Car model already exists for this brand", 409);
+      }
+
+      const modelId = uuid();
+      await execute(
+        `INSERT INTO car_models (id, organization_id, car_brand_id, name, is_active, created_at, created_by, last_modified_at, last_modified_by)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+        [modelId, targetOrgId, brandId, modelName.trim(), now, req.user.id, now, req.user.id]
+      );
+
+      const created = await getOne(
+        `SELECT cm.id, cm.name, cm.organization_id, cm.is_active, cm.created_at, cb.name as brand_name
+         FROM car_models cm JOIN car_brands cb ON cb.id = cm.car_brand_id WHERE cm.id = ?`,
+        [modelId]
+      );
+
+      res.status(201).json({
+        success: true,
+        message: "Car model created successfully",
+        data: created,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async toggleCarStatus(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+      const val = isActive ? 1 : 0;
+      await execute("UPDATE car_models SET is_active = ?, last_modified_at = ?, last_modified_by = ? WHERE id = ?", [val, new Date().toISOString(), req.user.id, id]);
+      res.json({ success: true, message: `Car model status updated to ${val === 1 ? 'active' : 'inactive'}.` });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteCar(req, res, next) {
+    try {
+      const { id } = req.params;
+      const model = await getOne("SELECT name FROM car_models WHERE id = ?", [id]);
+      if (!model) throw new AppError("Car model not found", 404);
+      await execute("DELETE FROM car_models WHERE id = ?", [id]);
+      res.json({ success: true, message: `Car model "${model.name}" deleted successfully.` });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async toggleCarBrandStatus(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+      const val = isActive ? 1 : 0;
+      await execute("UPDATE car_brands SET is_active = ?, last_modified_at = ?, last_modified_by = ? WHERE id = ?", [val, new Date().toISOString(), req.user.id, id]);
+      res.json({ success: true, message: `Car brand status updated to ${val === 1 ? 'active' : 'inactive'}.` });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deleteCarBrand(req, res, next) {
+    try {
+      const { id } = req.params;
+      const brand = await getOne("SELECT name FROM car_brands WHERE id = ?", [id]);
+      if (!brand) throw new AppError("Car brand not found", 404);
+      await execute("DELETE FROM car_models WHERE car_brand_id = ?", [id]);
+      await execute("DELETE FROM car_brands WHERE id = ?", [id]);
+      res.json({ success: true, message: `Car brand "${brand.name}" and associated models deleted successfully.` });
     } catch (error) {
       next(error);
     }

@@ -190,7 +190,7 @@ async function createTablesSqlite() {
 
     CREATE TABLE IF NOT EXISTS tyre_sizes (
       id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
+      organization_id TEXT,
       size TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -202,7 +202,7 @@ async function createTablesSqlite() {
 
     CREATE TABLE IF NOT EXISTS tyre_brands (
       id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
+      organization_id TEXT,
       name TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -232,7 +232,7 @@ async function createTablesSqlite() {
 
     CREATE TABLE IF NOT EXISTS car_brands (
       id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
+      organization_id TEXT,
       name TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -244,7 +244,7 @@ async function createTablesSqlite() {
 
     CREATE TABLE IF NOT EXISTS car_models (
       id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
+      organization_id TEXT,
       car_brand_id TEXT NOT NULL,
       name TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
@@ -400,6 +400,94 @@ async function runSqliteMigrations() {
           console.warn(`[Migration] SQLite warning adding ${table}.${col.name}:`, err.message);
         }
       }
+    }
+  }
+
+  // Ensure organization_id is nullable on master tables so global masters work
+  const masterTables = [
+    {
+      name: "tyre_sizes",
+      cols: ["id", "organization_id", "size", "is_active", "created_at", "created_by", "last_modified_at", "last_modified_by"],
+      sql: (t) => `CREATE TABLE ${t} (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT,
+        size TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        last_modified_at TEXT NOT NULL,
+        last_modified_by TEXT,
+        FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )`
+    },
+    {
+      name: "tyre_brands",
+      cols: ["id", "organization_id", "name", "is_active", "created_at", "created_by", "last_modified_at", "last_modified_by"],
+      sql: (t) => `CREATE TABLE ${t} (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT,
+        name TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        last_modified_at TEXT NOT NULL,
+        last_modified_by TEXT,
+        FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )`
+    },
+    {
+      name: "car_brands",
+      cols: ["id", "organization_id", "name", "is_active", "created_at", "created_by", "last_modified_at", "last_modified_by"],
+      sql: (t) => `CREATE TABLE ${t} (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT,
+        name TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        last_modified_at TEXT NOT NULL,
+        last_modified_by TEXT,
+        FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )`
+    },
+    {
+      name: "car_models",
+      cols: ["id", "organization_id", "car_brand_id", "name", "is_active", "created_at", "created_by", "last_modified_at", "last_modified_by"],
+      sql: (t) => `CREATE TABLE ${t} (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT,
+        car_brand_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        last_modified_at TEXT NOT NULL,
+        last_modified_by TEXT,
+        FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY(car_brand_id) REFERENCES car_brands(id) ON DELETE CASCADE
+      )`
+    }
+  ];
+
+  for (const item of masterTables) {
+    try {
+      const cols = await query(`PRAGMA table_info(${item.name})`);
+      const orgCol = cols.find((c) => c.name.toLowerCase() === "organization_id");
+      if (orgCol && orgCol.notnull === 1) {
+        console.log(`[Migration] Migrating ${item.name} to allow NULL organization_id (global master support)...`);
+        await execute("PRAGMA foreign_keys = OFF;");
+        const tempTable = `${item.name}_mig_${Date.now()}`;
+        await execute(`DROP TABLE IF EXISTS ${tempTable};`);
+        await execute(item.sql(tempTable));
+        const colStr = item.cols.join(", ");
+        await execute(`INSERT INTO ${tempTable} (${colStr}) SELECT ${colStr} FROM ${item.name};`);
+        await execute(`DROP TABLE ${item.name};`);
+        await execute(`ALTER TABLE ${tempTable} RENAME TO ${item.name};`);
+        await execute("PRAGMA foreign_keys = ON;");
+        console.log(`[Migration] Successfully migrated ${item.name} for global catalog support.`);
+      }
+    } catch (migErr) {
+      console.warn(`[Migration] Error during nullable check for ${item.name}:`, migErr.message);
     }
   }
 }
